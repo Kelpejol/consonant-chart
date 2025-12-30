@@ -1,0 +1,181 @@
+{{/*
+RBAC - Role-Based Access Control
+=================================
+Defines permissions for the relayer service account
+
+NAMESPACE-SCOPED (Not Cluster-Scoped):
+- Uses Role (not ClusterRole)
+- Uses RoleBinding (not ClusterRoleBinding)
+- Relayer can only access resources in its own namespace
+- Follows principle of least privilege
+
+PERMISSIONS GRANTED:
+1. Read KAgent CRDs (agents, agentruntimes, agentruns)
+   → Watch agent lifecycle
+2. Read/Create Pods and Pod logs
+   → Monitor agent execution, create agent invocations
+3. Read Events
+   → Track K8s events related to agents
+4. Read ConfigMaps
+   → Validate KAgent configuration
+5. Read Deployments
+   → Health checks for KAgent controller
+6. Create Secrets (pre-install hook only)
+   → Store cluster credentials
+
+WHY THESE PERMISSIONS:
+- Relayer needs to watch agents and transport telemetry to backend
+- Creating pods allows relayer to invoke agents on behalf of backend
+- Logs and events provide debugging information
+- ConfigMaps validate KAgent is correctly configured
+- Deployments check KAgent controller health
+*/}}
+
+{{- if .Values.rbac.create }}
+
+{{/*
+=============================================
+ServiceAccount
+=============================================
+Identity for relayer pods
+Pods authenticate to K8s API using this SA
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "consonant-relayer.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+  {{- with .Values.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- if .Values.relayer.imagePullSecrets }}
+imagePullSecrets:
+  {{- toYaml .Values.relayer.imagePullSecrets | nindent 2 }}
+{{- end }}
+
+{{/*
+=============================================
+Role (Namespace-Scoped)
+=============================================
+Defines what the service account can do
+Only applies to resources in this namespace
+*/}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+  {{- with (include "consonant-relayer.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+rules:
+# ===== KAgent CRDs =====
+# Watch agent definitions and runs
+- apiGroups: ["kagent.dev"]
+  resources:
+    - agents
+    - agentruntimes
+    - agentruns
+  verbs:
+    - get      # Read single resource
+    - list     # List all resources
+    - watch    # Watch for changes (used by informers)
+    - create   # Create agent runs (for invocations)
+
+# ===== Pods =====
+# Monitor agent pods and read their logs
+- apiGroups: [""]
+  resources:
+    - pods
+    - pods/log
+  verbs:
+    - get
+    - list
+    - watch
+
+# ===== Events =====
+# Track K8s events (pod failures, OOMKilled, etc.)
+- apiGroups: [""]
+  resources:
+    - events
+  verbs:
+    - get
+    - list
+    - watch
+
+# ===== ConfigMaps =====
+# Read KAgent configuration for validation
+- apiGroups: [""]
+  resources:
+    - configmaps
+  verbs:
+    - get
+    - list
+
+# ===== Deployments =====
+# Check if KAgent controller is healthy
+- apiGroups: ["apps"]
+  resources:
+    - deployments
+  verbs:
+    - get
+    - list
+
+# ===== Secrets =====
+# Pre-install hook needs to create cluster credentials secret
+# Regular relayer pods don't need this, but SA is shared
+- apiGroups: [""]
+  resources:
+    - secrets
+  verbs:
+    - create   # Create cluster credentials (pre-install hook)
+    - get      # Read own secrets
+    - patch    # Update secrets if needed
+
+{{- with .Values.rbac.additionalRules }}
+# ===== Additional Rules (from values) =====
+{{- toYaml . | nindent 0 }}
+{{- end }}
+
+{{/*
+=============================================
+RoleBinding
+=============================================
+Binds the Role to the ServiceAccount
+Grants the permissions to the relayer
+*/}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+  {{- with (include "consonant-relayer.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+subjects:
+# Who gets the permissions
+- kind: ServiceAccount
+  name: {{ include "consonant-relayer.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  # What permissions they get
+  kind: Role
+  name: {{ include "consonant-relayer.fullname" . }}
+  apiGroup: rbac.authorization.k8s.io
+
+{{- end }}

@@ -1,0 +1,391 @@
+# values.yaml - Default configuration for Consonant Relayer
+# Users override these with --set flags or custom values files
+# All values are documented inline
+
+# ============================================
+# REQUIRED: Cluster Identification
+# ============================================
+cluster:
+  # Unique name for this cluster
+  # Used for: UI identification, log correlation, backend registration
+  # Examples: "production-us-east", "staging-eu", "dev-local"
+  # MUST be set during installation
+  name: ""  # REQUIRED via --set cluster.name=production-us-east
+  
+  # Kubernetes namespace where agents run
+  # Should match the namespace where this chart is installed
+  # Default: consonant-system
+  namespace: "consonant-system"
+
+# ============================================
+# REQUIRED: Backend Configuration
+# ============================================
+backend:
+  # URL of your self-hosted Consonant backend
+  # This should be the Cloudflare Tunnel URL (e.g., https://consonant.example.com)
+  # The relayer connects to this via the Cloudflare tunnel sidecar
+  # MUST be set during installation
+  url: ""  # REQUIRED via --set backend.url=https://...
+  
+  # Socket.io path (usually don't need to change)
+  socketPath: "/socket.io"
+  
+  # Connection retry settings
+  reconnection:
+    enabled: true
+    delay: 1000  # milliseconds
+    maxDelay: 5000
+    attempts: Infinity  # Always try to reconnect
+  
+  # Please warning do not set these values manually
+  # Pre-populated by pre-install hook (don't set manually)
+  # Only set these if re-installing with existing cluster
+  clusterId: ""
+  clusterToken: ""
+
+# ============================================
+# REQUIRED: Cloudflare Tunnel Configuration
+# ============================================
+cloudflare:
+  # Enable Cloudflare Tunnel
+  # When true: relayer connects to backend via cloudflared sidecar
+  # When false: relayer connects directly to backend.url (not recommended for production)
+  enabled: true
+  
+  # Cloudflare Tunnel token
+  # Get this from: Cloudflare Dashboard → Zero Trust → Access → Tunnels
+  # Format: eyJhIjoiY...
+  # MUST be set when cloudflare.enabled=true
+  tunnelToken: ""  # REQUIRED via --set cloudflare.tunnelToken=eyJ...
+  
+  # Tunnel sidecar configuration
+  sidecar:
+    # Cloudflared image
+    image:
+      repository: cloudflare/cloudflared
+      tag: 2025.11.1
+      pullPolicy: Always
+    
+    # Resources for cloudflared container
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+    
+    # Cloudflared args (advanced users only)
+    extraArgs: []
+    # Example:
+    # - --protocol=quic
+    # - --loglevel=debug
+
+# ============================================
+# REQUIRED: LLM Configuration (for KAgent)
+# ============================================
+llm:
+  # LLM provider
+  # Supported: openai, anthropic, gemini, azureopenai, ollama
+  provider: "openai"
+  
+  # API key for the LLM provider
+  # MUST be set during installation
+  apiKey: ""  # REQUIRED via --set llm.apiKey=sk-...
+  
+  # Model to use (provider-specific)
+  # OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo
+  # Anthropic: claude-3-5-sonnet-20241022, claude-3-opus-20240229
+  # Gemini: gemini-1.5-pro, gemini-1.5-flash
+  model: "gpt-4o-mini"
+  
+  # Azure OpenAI specific (only if provider=azureopenai)
+  azure:
+    endpoint: ""
+    deploymentName: ""
+  
+  # Ollama specific (only if provider=ollama)
+  ollama:
+    baseUrl: "http://ollama:11434"
+
+# ============================================
+# Relayer Configuration
+# ============================================
+relayer:
+  # Number of relayer replicas
+  # Usually 1 is enough (Socket.io handles reconnection)
+  # Increase for high availability
+  replicas: 1
+  
+  # Container image
+  image:
+    repository: ghcr.io/consonant/relayer
+    tag: ""  # Defaults to Chart.appVersion if empty
+    pullPolicy: IfNotPresent
+  
+  # Image pull secrets (if using private registry)
+  imagePullSecrets: []
+  # - name: ghcr-secret
+  
+  # Resource limits and requests
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+  
+  # OTEL Collector configuration
+  otel:
+    # Port where relayer receives OTEL from KAgent
+    port: 4317
+    # Batch size before forwarding to backend
+    batchSize: 100
+    # Flush interval (milliseconds)
+    flushInterval: 1000
+  
+  # Health check configuration
+  health:
+    port: 8080
+    liveness:
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    startup:
+      initialDelaySeconds: 0
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 30  # 150 seconds max startup time
+  
+  # Log level: trace, debug, info, warn, error
+  logLevel: "info"
+  
+  # Node selector for pod placement
+  nodeSelector: {}
+  # Example:
+  # disktype: ssd
+  
+  # Tolerations for pod scheduling
+  tolerations: []
+  # Example:
+  # - key: "dedicated"
+  #   operator: "Equal"
+  #   value: "ai-workloads"
+  #   effect: "NoSchedule"
+  
+  # Affinity rules
+  affinity: {}
+  # Example:
+  # podAntiAffinity:
+  #   preferredDuringSchedulingIgnoredDuringExecution:
+  #   - weight: 100
+  #     podAffinityTerm:
+  #       labelSelector:
+  #         matchLabels:
+  #           app.kubernetes.io/name: consonant-relayer
+  #       topologyKey: kubernetes.io/hostname
+  
+  # Pod annotations
+  podAnnotations: {}
+  # Example:
+  # prometheus.io/scrape: "true"
+  
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+
+# ============================================
+# Service Configuration
+# ============================================
+service:
+  # Service type for OTEL endpoint
+  # Usually ClusterIP (internal only)
+  type: ClusterIP
+  
+  # OTEL port
+  otelPort: 4317
+  
+  # Health check port
+  healthPort: 8080
+  
+  # Service annotations
+  annotations: {}
+  # Example:
+  # prometheus.io/scrape: "true"
+  # prometheus.io/port: "8080"
+
+# ============================================
+# ServiceAccount & RBAC
+# ============================================
+serviceAccount:
+  # Create a service account
+  create: true
+  
+  # Annotations for the service account
+  annotations: {}
+  # Example:
+  # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/consonant-relayer
+  
+  # Name of the service account
+  # If not set, uses the release name
+  name: ""
+
+rbac:
+  # Create RBAC resources (Role, RoleBinding)
+  create: true
+  
+  # Additional rules (advanced users only)
+  # These are merged with the default rules
+  additionalRules: []
+
+# ============================================
+# KAgent Configuration (Dependency)
+# ============================================
+kagent:
+  # Enable KAgent installation
+  # If false, assumes KAgent is already installed
+  enabled: true
+  
+  # Install KAgent CRDs
+  # Set to false if CRDs are already installed
+  installCRDs: true
+  
+  # Disable KAgent UI (Consonant provides the UI)
+  ui:
+    enabled: false
+  
+  # Disable all default agents and tools
+  # Users create custom agents through Consonant 
+  agents:
+    k8s-agent:
+      enabled: false
+    helm-agent:
+      enabled: false
+    istio-agent:
+      enabled: false
+    argo-rollouts-agent:
+      enabled: false
+    cilium-debug-agent:
+      enabled: false
+    cilium-manager-agent:
+      enabled: false
+    cilium-policy-agent:
+      enabled: false
+    kgateway-agent:
+      enabled: false
+    observability-agent:
+      enabled: false
+    promql-agent:
+      enabled: false
+  
+  tools:
+    grafana-mcp:
+      enabled: false
+    querydoc:
+      enabled: false
+  
+  # OTEL configuration - points to relayer
+  # These are auto-configured in templates
+  otel:
+    tracing:
+      enabled: true
+      exporter:
+        otlp:
+          endpoint: ""  # Auto-set to relayer service
+          insecure: true
+          timeout: 15
+    logging:
+      enabled: true
+      exporter:
+        otlp:
+          endpoint: ""  # Auto-set to relayer service
+          insecure: true
+          timeout: 15
+  
+  # LLM provider configuration
+  # Auto-configured from top-level llm values
+  providers:
+    default: ""  # Auto-set
+    openAI:
+      apiKeySecretRef: ""  # Auto-set
+      apiKeySecretKey: "apiKey"
+      model: ""  # Auto-set
+    anthropic:
+      apiKeySecretRef: ""  # Auto-set
+      apiKeySecretKey: "apiKey"
+      model: ""  # Auto-set
+    gemini:
+      apiKeySecretRef: ""  # Auto-set
+      apiKeySecretKey: "apiKey"
+      model: ""  # Auto-set
+  
+  # KMCP (Model Context Protocol)
+  kmcp:
+    enabled: true
+  
+  # KAgent controller resources
+  controller:
+    replicas: 1
+    loglevel: "info"
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 512Mi
+    streaming:
+      timeout: "300s"
+      initialBufSize: "8Ki"
+      maxBufSize: "2Mi"
+  
+  # Database - SQLite for simplicity
+  # Production should use PostgreSQL
+  database:
+    type: "sqlite"
+    sqlite:
+      databaseName: "kagent.db"
+
+# ============================================
+# Advanced Options
+# ============================================
+
+# Full name override
+# Overrides the generated full name
+fullnameOverride: ""
+
+# Name override
+# Overrides just the name component
+nameOverride: ""
+
+# Additional labels for all resources
+commonLabels: {}
+# Example:
+# environment: production
+# team: platform
+
+# Additional annotations for all resources
+commonAnnotations: {}
+# Example:
+# owner: platform-team

@@ -1,0 +1,64 @@
+{{/*
+ConfigMap - Non-Sensitive Configuration
+========================================
+Stores configuration that doesn't need to be secret
+Currently minimal since most config is in env vars
+
+USAGE:
+- Can be mounted as files or exposed as environment variables
+- Changes trigger pod restart (via checksum annotation)
+
+FUTURE USE:
+- Application configuration files
+- Scripts that need to be mounted
+- Non-sensitive settings
+*/}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: configuration
+  {{- with (include "consonant-relayer.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+data:
+  # Cluster configuration
+  cluster.yaml: |
+    name: {{ .Values.cluster.name | quote }}
+    namespace: {{ .Values.cluster.namespace | quote }}
+  
+  # Backend configuration
+  backend.yaml: |
+    url: {{ .Values.backend.url | quote }}
+    socketPath: {{ .Values.backend.socketPath | quote }}
+    reconnection:
+      enabled: {{ .Values.backend.reconnection.enabled }}
+      delay: {{ .Values.backend.reconnection.delay }}
+      maxDelay: {{ .Values.backend.reconnection.maxDelay }}
+      attempts: {{ .Values.backend.reconnection.attempts }}
+  
+  # OTEL configuration
+  otel.yaml: |
+    port: {{ .Values.relayer.otel.port }}
+    batchSize: {{ .Values.relayer.otel.batchSize }}
+    flushInterval: {{ .Values.relayer.otel.flushInterval }}
+  
+  # Feature flags (if needed in future)
+  features.yaml: |
+    cloudflare:
+      enabled: {{ .Values.cloudflare.enabled }}
+    kagent:
+      enabled: {{ .Values.kagent.enabled }}
+  
+  # Release metadata
+  release.yaml: |
+    name: {{ .Release.Name | quote }}
+    namespace: {{ .Release.Namespace | quote }}
+    chart: {{ include "consonant-relayer.chart" . | quote }}
+    version: {{ .Chart.Version | quote }}
+    appVersion: {{ .Chart.AppVersion | quote }}

@@ -1,0 +1,426 @@
+{{/*
+Pre-Install Hook - Cluster Registration
+=========================================
+This hook runs BEFORE any other resources are created
+It registers the cluster with the backend and creates credentials
+
+EXECUTION ORDER:
+1. User runs: helm install ...
+2. Helm creates this Job with hook annotation
+3. Job runs and registers cluster with backend
+4. Job creates Secret with cluster credentials
+5. Helm continues with main installation
+6. Deployment can now read the credentials from Secret
+
+WHY A HOOK?
+- We need clusterId and clusterToken BEFORE deploying relayer
+- The backend generates these during registration
+- Hook ensures they're ready when Deployment starts
+
+HOOK ANNOTATIONS:
+- helm.sh/hook: pre-install,pre-upgrade
+  → Run before install AND before upgrade
+- helm.sh/hook-weight: "0"
+  → Run after weight -5, before main resources
+- helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  → Delete old job before creating new one
+  → Delete job after it succeeds (keeps cluster clean)
+*/}}
+
+{{/* Only create if cluster credentials don't already exist */}}
+{{- if not .Values.backend.clusterId }}
+
+{{/*
+=============================================
+PART 1: ConfigMap with Registration Script
+=============================================
+Separated from Job so it's easier to debug
+Can do: kubectl get cm <name> -o yaml to see script
+*/}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}-register-script
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registration
+  annotations:
+    # Helm hook annotations
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"  # Create before Job (weight 0)
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  register.sh: |
+    #!/bin/sh
+    # Bash script to register cluster with backend
+    # Runs inside a Kubernetes Job pod
+    
+    set -e  # Exit on any error
+    
+    # ====================================
+    # Header
+    # ====================================
+    echo "=============================================="
+    echo "  Consonant Cluster Registration"
+    echo "=============================================="
+    echo ""
+    echo "Cluster Name: ${CLUSTER_NAME}"
+    echo "Namespace:    ${NAMESPACE}"
+    echo "Backend URL:  ${BACKEND_URL}"
+    echo ""
+    
+    # ====================================
+    # Determine Connection Method
+    # ====================================
+    # If using Cloudflare tunnel, cloudflared sidecar is running
+    # We connect to localhost:8080 which forwards to backend
+    # Otherwise, connect directly to backend URL
+    
+    if [ "${CLOUDFLARE_ENABLED}" = "true" ]; then
+      echo "✓ Using Cloudflare Tunnel (via sidecar)"
+      REGISTER_URL="http://localhost:8080/api/v1/clusters"
+      
+      # Wait for cloudflared to be ready
+      echo "Waiting for tunnel to be ready..."
+      max_wait=60
+      wait_time=0
+      until nc -z localhost 8080 2>/dev/null; do
+        if [ $wait_time -ge $max_wait ]; then
+          echo "ERROR: Cloudflared sidecar did not start within ${max_wait}s"
+          exit 1
+        fi
+        sleep 2
+        wait_time=$((wait_time + 2))
+      done
+      echo "✓ Tunnel is ready"
+    else
+      echo "✓ Using direct connection"
+      REGISTER_URL="${BACKEND_URL}/api/v1/clusters"
+    fi
+    
+    echo ""
+    
+    # ====================================
+    # Register with Backend
+    # ====================================
+    echo "Registering cluster with backend..."
+    echo "POST ${REGISTER_URL}"
+    
+    # Make HTTP request with curl
+    # -s: silent mode (no progress bar)
+    # -w: write HTTP status code
+    # -X POST: HTTP POST method
+    # -H: headers
+    # -d: JSON body
+    # --max-time: timeout after 30 seconds
+    # --retry: retry up to 3 times
+    # --retry-delay: wait 2 seconds between retries
+    
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${REGISTER_URL}" \
+      -H "Content-Type: application/json" \
+      -H "User-Agent: consonant-helm/{{ .Chart.Version }}" \
+      -d "{\"name\":\"${CLUSTER_NAME}\",\"namespace\":\"${NAMESPACE}\"}" \
+      --max-time 30 \
+      --retry 3 \
+      --retry-delay 2 \
+      --connect-timeout 10)
+    
+    # Check if curl succeeded
+    curl_exit_code=$?
+    if [ $curl_exit_code -ne 0 ]; then
+      echo ""
+      echo "❌ ERROR: Failed to connect to backend (curl exit code: $curl_exit_code)"
+      echo ""
+      echo "Troubleshooting steps:"
+      echo "  1. Verify backend is running:"
+      echo "     curl ${BACKEND_URL}/health"
+      echo ""
+      echo "  2. Check Cloudflare tunnel status (if using tunnel):"
+      echo "     cloudflared tunnel info <tunnel-name>"
+      echo ""
+      echo "  3. Verify network connectivity from cluster"
+      echo ""
+      exit 1
+    fi
+    
+    # ====================================
+    # Parse Response
+    # ====================================
+    # Response format: <body>\n<status_code>
+    # Example:
+    # {"id":"cluster_abc","token":"secret123"}
+    # 200
+    
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | head -n-1)
+    
+    echo "HTTP Status: ${HTTP_CODE}"
+    
+    # Check HTTP status
+    if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
+      echo ""
+      echo "❌ ERROR: Registration failed with HTTP ${HTTP_CODE}"
+      echo ""
+      echo "Response body:"
+      echo "$BODY"
+      echo ""
+      
+      # Provide helpful error messages based on status code
+      case "$HTTP_CODE" in
+        400)
+          echo "Bad Request - Check that cluster name is valid"
+          ;;
+        401|403)
+          echo "Unauthorized - Backend may require authentication"
+          ;;
+        404)
+          echo "Not Found - Backend endpoint may not exist"
+          echo "Expected endpoint: /api/v1/clusters"
+          ;;
+        409)
+          echo "Conflict - Cluster with this name may already exist"
+          ;;
+        500|502|503)
+          echo "Server Error - Backend may be down or misconfigured"
+          ;;
+      esac
+      
+      exit 1
+    fi
+    
+    # ====================================
+    # Extract Credentials from JSON
+    # ====================================
+    # Using grep and sed for portability (no jq in base images)
+    # Looks for: "id":"value" and "token":"value"
+    
+    CLUSTER_ID=$(echo "$BODY" | grep -o '"id":"[^"]*"' | sed 's/"id":"//;s/"//')
+    CLUSTER_TOKEN=$(echo "$BODY" | grep -o '"token":"[^"]*"' | sed 's/"token":"//;s/"//')
+    
+    if [ -z "$CLUSTER_ID" ] || [ -z "$CLUSTER_TOKEN" ]; then
+      echo ""
+      echo "❌ ERROR: Failed to extract credentials from response"
+      echo ""
+      echo "Expected JSON format:"
+      echo '{"id":"cluster_xxx","token":"tok_xxx"}'
+      echo ""
+      echo "Actual response:"
+      echo "$BODY"
+      echo ""
+      exit 1
+    fi
+    
+    echo ""
+    echo "✅ Cluster registered successfully!"
+    echo "Cluster ID: ${CLUSTER_ID}"
+    echo ""
+    
+    # ====================================
+    # Create Kubernetes Secret
+    # ====================================
+    # This secret will be mounted by the relayer deployment
+    # It contains cluster identity and authentication token
+    
+    echo "Creating cluster credentials secret..."
+    
+    kubectl create secret generic {{ include "consonant-relayer.clusterSecretName" . }} \
+      --from-literal=clusterId="${CLUSTER_ID}" \
+      --from-literal=clusterToken="${CLUSTER_TOKEN}" \
+      --from-literal=clusterName="${CLUSTER_NAME}" \
+      --namespace="${NAMESPACE}" \
+      --dry-run=client -o yaml | kubectl apply -f -
+    
+    kubectl_exit_code=$?
+    if [ $kubectl_exit_code -ne 0 ]; then
+      echo ""
+      echo "❌ ERROR: Failed to create secret (kubectl exit code: $kubectl_exit_code)"
+      echo ""
+      echo "Check if service account has permission to create secrets"
+      exit 1
+    fi
+    
+    echo "✅ Credentials stored in secret: {{ include "consonant-relayer.clusterSecretName" . }}"
+    echo ""
+    echo "=============================================="
+    echo "  Registration Complete"
+    echo "=============================================="
+    echo ""
+    echo "Next steps:"
+    echo "  → Relayer will connect using these credentials"
+    echo "  → View cluster in backend: ${BACKEND_URL}/clusters/${CLUSTER_ID}"
+    echo ""
+
+{{/*
+=============================================
+PART 2: Job that Runs the Script
+=============================================
+This Job executes the registration script
+Runs as a pre-install/pre-upgrade hook
+*/}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}-register
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registration
+  annotations:
+    # Helm hook - runs before install/upgrade
+    "helm.sh/hook": pre-install,pre-upgrade
+    # Weight 0 - runs after ConfigMap (weight -5)
+    "helm.sh/hook-weight": "0"
+    # Delete policy - clean up after success
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  # Keep completed job for 10 minutes for debugging
+  ttlSecondsAfterFinished: 600
+  
+  # Retry up to 3 times if job fails
+  backoffLimit: 3
+  
+  template:
+    metadata:
+      labels:
+        {{- include "consonant-relayer.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: registration
+      annotations:
+        # Disable service mesh injection (if using Istio/Linkerd)
+        sidecar.istio.io/inject: "false"
+        linkerd.io/inject: disabled
+    spec:
+      # Don't restart on failure - Job handles retries
+      restartPolicy: Never
+      
+      # Use relayer's service account
+      # Needs permission to create secrets
+      serviceAccountName: {{ include "consonant-relayer.serviceAccountName" . }}
+      
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534  # nobody user
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      
+      {{- if .Values.cloudflare.enabled }}
+      {{/*
+      If using Cloudflare tunnel, run cloudflared as sidecar
+      Registration script connects to localhost:8080
+      Cloudflared forwards to backend through tunnel
+      */}}
+      containers:
+      # Cloudflared sidecar
+      - name: cloudflared
+        image: {{ include "consonant-relayer.cloudflaredImage" . }}
+        imagePullPolicy: {{ .Values.cloudflare.sidecar.image.pullPolicy }}
+        args:
+          - tunnel
+          - --no-autoupdate
+          - run
+          - --token
+          - $(TUNNEL_TOKEN)
+          {{- with .Values.cloudflare.sidecar.extraArgs }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+        env:
+        - name: TUNNEL_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "consonant-relayer.tunnelSecretName" . }}
+              key: token
+        - name: TUNNEL_TRANSPORT_PROTOCOL
+          value: "quic"
+        - name: TUNNEL_LOGLEVEL
+          value: "info"
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 2000
+          protocol: TCP
+        resources:
+          {{- toYaml .Values.cloudflare.sidecar.resources | nindent 10 }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532  # nonroot user
+      {{- end }}
+      
+      # Main registration container
+      - name: register
+        # Using bitnami/kubectl image - has curl and kubectl
+        image: bitnami/kubectl:latest
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/sh
+          - /scripts/register.sh
+        env:
+        # Configuration from values
+        - name: CLUSTER_NAME
+          value: {{ required "cluster.name is required" .Values.cluster.name | quote }}
+        - name: NAMESPACE
+          value: {{ .Release.Namespace | quote }}
+        - name: BACKEND_URL
+          value: {{ .Values.backend.url | quote }}
+        - name: CLOUDFLARE_ENABLED
+          value: {{ .Values.cloudflare.enabled | quote }}
+        
+        volumeMounts:
+        # Mount the registration script
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        
+        # Temp directory (required for readOnlyRootFilesystem)
+        - name: tmp
+          mountPath: /tmp
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+        
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+      
+      volumes:
+      # ConfigMap containing registration script
+      - name: scripts
+        configMap:
+          name: {{ include "consonant-relayer.fullname" . }}-register-script
+          defaultMode: 0755  # Make script executable
+      
+      # Temporary directory
+      - name: tmp
+        emptyDir: {}
+      
+      {{- with .Values.relayer.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      
+      {{- with .Values.relayer.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+{{- end }}

@@ -1,0 +1,208 @@
+{{/*
+NOTES.txt - Post-Installation Instructions
+===========================================
+Displayed after successful helm install
+Provides next steps and useful commands
+
+Template Variables Available:
+- .Release.Name
+- .Release.Namespace
+- .Values.*
+- Helper functions
+*/}}
+
+✅ Consonant Relayer installed successfully!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 INSTALLATION SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Release Name:     {{ .Release.Name }}
+Namespace:        {{ .Release.Namespace }}
+Cluster Name:     {{ .Values.cluster.name }}
+Backend URL:      {{ .Values.backend.url }}
+Cloudflare:       {{ if .Values.cloudflare.enabled }}✓ Enabled{{ else }}✗ Disabled{{ end }}
+KAgent:           {{ if .Values.kagent.enabled }}✓ Installed{{ else }}✗ Skipped{{ end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 VERIFY INSTALLATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Check pod status:
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. Watch pods until ready:
+   kubectl get pods -n {{ .Release.Namespace }} -w
+
+3. Check logs:
+   # relayer logs
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "consonant-relayer.name" . }},app.kubernetes.io/component=relayer -f
+
+   {{- if .Values.cloudflare.enabled }}
+   # Cloudflared logs
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "consonant-relayer.name" . }},app.kubernetes.io/component=relayer -c cloudflared -f
+   {{- end }}
+
+   {{- if .Values.kagent.enabled }}
+   # KAgent logs
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent -f
+   {{- end }}
+
+4. Check registration status:
+   kubectl get job -n {{ .Release.Namespace }} {{ include "consonant-relayer.fullname" . }}-register
+   kubectl logs -n {{ .Release.Namespace }} job/{{ include "consonant-relayer.fullname" . }}-register
+
+5. Verify cluster credentials:
+   kubectl get secret -n {{ .Release.Namespace }} {{ include "consonant-relayer.clusterSecretName" . }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔗 CONNECTIVITY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The relayer connects to your backend via:
+{{- if .Values.cloudflare.enabled }}
+  • Cloudflare Tunnel (secure, recommended)
+  • Tunnel Token: {{ printf "%.20s..." .Values.cloudflare.tunnelToken }}
+{{- else }}
+  • Direct connection to {{ .Values.backend.url }}
+{{- end }}
+
+OTEL Endpoint (for KAgent):
+  • Service: {{ include "consonant-relayer.fullname" . }}:{{ .Values.relayer.otel.port }}
+  • Full DNS: {{ include "consonant-relayer.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.relayer.otel.port }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧪 TEST THE CONNECTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Port-forward to health endpoint:
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "consonant-relayer.fullname" . }} 8080:{{ .Values.relayer.health.port }}
+
+2. Check health (in another terminal):
+   curl http://localhost:8080/health
+
+   Expected response:
+   {
+     "status": "ok",
+     "socket": {
+       "connected": true,
+       "clusterId": "cluster_xxx"
+     },
+     "otel": {
+       "port": {{ .Values.relayer.otel.port }},
+       "ready": true
+     }
+   }
+
+{{- if .Values.kagent.enabled }}
+
+3. Create a test agent:
+   kubectl apply -f - <<EOF
+   apiVersion: kagent.dev/v1alpha2
+   kind: Agent
+   metadata:
+     name: test-agent
+     namespace: {{ .Release.Namespace }}
+   spec:
+     type: Declarative
+     declarative:
+       description: "Test agent for Consonant verification"
+       modelRef:
+         name: default-{{ include "consonant-relayer.kagentProvider" . | lower }}
+   EOF
+
+4. Check agent status:
+   kubectl get agents -n {{ .Release.Namespace }} test-agent
+
+5. View agent in backend UI:
+   Open: {{ .Values.backend.url }}/clusters/{{ .Values.cluster.name }}/agents
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚙️  CONFIGURATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+To update configuration:
+  helm upgrade {{ .Release.Name }} {{ .Chart.Name }} \
+    --reuse-values \
+    --set key=value
+
+To see all values:
+  helm get values {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+To see all resources:
+  helm get manifest {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If pods are not starting:
+  1. Check events:
+     kubectl get events -n {{ .Release.Namespace }} --sort-by='.lastTimestamp'
+
+  2. Describe pod:
+     kubectl describe pod -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+  3. Check pre-install job:
+     kubectl logs -n {{ .Release.Namespace }} job/{{ include "consonant-relayer.fullname" . }}-register
+
+{{- if .Values.cloudflare.enabled }}
+
+If Cloudflare tunnel is not connecting:
+  1. Verify tunnel token is correct
+  2. Check cloudflared logs:
+     kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "consonant-relayer.name" . }} -c cloudflared
+
+  3. Verify tunnel in Cloudflare Dashboard:
+     Zero Trust → Access → Tunnels
+{{- end }}
+
+{{- if .Values.kagent.enabled }}
+
+If KAgent is not working:
+  1. Check KAgent controller:
+     kubectl get deployment -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent
+
+  2. Check KAgent logs:
+     kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent
+
+  3. Verify OTEL endpoint configuration:
+     kubectl get deployment -n {{ .Release.Namespace }} kagent-controller -o yaml | grep OTEL_EXPORTER
+{{- end }}
+
+If relayer is not connecting to backend:
+  1. Check relayer logs for connection errors
+  2. Verify backend is accessible:
+     kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
+       curl -v {{ .Values.backend.url }}/health
+
+  3. Check Socket.io connection:
+     Look for "Connected to backend" in relayer logs
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📚 DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  • Full Documentation: https://docs.consonant.xyz
+  • GitHub: https://github.com/consonant/consonant
+  • Support: support@consonant.xyz
+  • Community: https://discord.gg/consonant
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 NEXT STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Open your Consonant backend UI:
+   {{ .Values.backend.url }}
+
+2. Navigate to the cluster:
+   Clusters → {{ .Values.cluster.name }}
+
+3. Start creating agents through the UI
+
+4. Watch real-time telemetry as agents execute
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Thank you for using Consonant! 🎉

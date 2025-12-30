@@ -1,0 +1,64 @@
+# .helmignore - Excludes files from Helm package
+# Similar to .gitignore but for Helm charts
+# Keeps chart package small and clean
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD configs
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+Jenkinsfile
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.bak
+
+# Documentation (we keep README.md in the chart)
+docs/
+*.md.backup
+
+# Test files
+test/
+tests/
+*_test.yaml
+*.test.yaml
+
+# Development/local files
+values-local.yaml
+values-dev.yaml
+values-*.local.yaml
+secrets.yaml
+local-*.yaml
+
+# Build artifacts
+*.tar.gz
+*.tgz
+dist/
+build/
+.cache/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# Package manager
+node_modules/
+package-lock.json
+yarn.lock
+
+# OS files
+Thumbs.db
+.Spotlight-V100
+.Trashes

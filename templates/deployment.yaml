@@ -1,0 +1,480 @@
+{{/*
+Deployment - Main Relayer Application
+=======================================
+Deploys the relayer with optional Cloudflare tunnel sidecar
+
+ARCHITECTURE:
+┌─────────────────────────────────────┐
+│           Pod                        │
+│                                      │
+│  ┌─────────────┐   ┌──────────────┐│
+│  │  Relayer   │   │ Cloudflared  ││
+│  │   (main)    │   │  (sidecar)   ││
+│  │             │   │              ││
+│  │ :4317 OTEL  │   │ :8080 Tunnel ││
+│  │ :8080 Health│   │              ││
+│  │             │───▶│              ││
+│  │ Socket.io   │   │ Forwards to  ││
+│  │ → localhost │   │ Backend via  ││
+│  │              │   │ CF Tunnel    ││
+│  └─────────────┘   └──────────────┘│
+└─────────────────────────────────────┘
+         ▲
+         │ OTEL traces
+         │
+    ┌────┴────┐
+    │ KAgent  │
+    └─────────┘
+
+CONTAINERS:
+1. Relayer (main container)
+   - Receives OTEL from KAgent on :4317
+   - Connects to backend via Socket.io and Cloudflare tunnel (if enabled)
+   - Forwards telemetry to backend in real-time
+
+2. Cloudflared (sidecar, optional)
+   - Establishes Cloudflare tunnel
+   - Exposes localhost:8080
+   - Relayer connects to localhost, cloudflared forwards to backend
+
+INITIALIZATION:
+1. Pre-install hook creates cluster credentials secret
+2. Init container waits for secret to exist
+3. Main containers start
+4. Cloudflared establishes tunnel (if enabled)
+5. Relayer connects to backend
+6. Relayer registers OTEL endpoint with KAgent
+
+HEALTH CHECKS:
+- Startup probe: gives relayer time to connect (up to 150s)
+- Liveness probe: restarts pod if relayer crashes
+- Readiness probe: removes pod from service if not ready
+
+UPDATES:
+- RollingUpdate strategy (zero downtime)
+- Max 1 pod over desired count (surge)
+- Max 0 pods below desired count (unavailable)
+- This ensures old pod stays until new pod is ready
+*/}}
+
+{{/* Validate required values */}}
+{{- include "consonant-relayer.validateValues" . }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relayer
+  {{- with (include "consonant-relayer.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  # Number of replica pods
+  replicas: {{ .Values.relayer.replicas }}
+  
+  # Update strategy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # Allow 1 extra pod during update
+      maxUnavailable: 0  # Ensure at least 1 pod always running
+  
+  # Selector must match pod labels
+  # This selector is IMMUTABLE - cannot be changed after creation
+  selector:
+    matchLabels:
+      {{- include "consonant-relayer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: relayer
+  
+  # Pod template
+  template:
+    metadata:
+      labels:
+        {{- include "consonant-relayer.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: relayer
+      annotations:
+        # Force pod restart when config/secrets change
+        # SHA256 hash of ConfigMap content
+        {{- include "consonant-relayer.configChecksum" . | nindent 8 }}
+        # SHA256 hash of Secrets
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        {{- with .Values.relayer.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      # Service account for K8s API access
+      serviceAccountName: {{ include "consonant-relayer.serviceAccountName" . }}
+      
+      # Image pull secrets (if using private registry)
+      {{- with .Values.relayer.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      
+      # Pod-level security context
+      securityContext:
+        {{- toYaml .Values.relayer.podSecurityContext | nindent 8 }}
+      
+      {{/*
+      =============================================
+      Init Containers
+      =============================================
+      Run before main containers start
+      Used to wait for dependencies
+      */}}
+      initContainers:
+      # Wait for cluster credentials secret to exist
+      # Pre-install hook creates this, but there's a race condition
+      - name: wait-for-credentials
+        image: bitnami/kubectl:latest
+        imagePullPolicy: IfNotPresent
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for cluster credentials secret..."
+            until kubectl get secret {{ include "consonant-relayer.clusterSecretName" . }} -n {{ .Release.Namespace }} 2>/dev/null; do
+              echo "Secret not found, waiting..."
+              sleep 2
+            done
+            echo "✓ Credentials ready"
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 32Mi
+      
+      {{- if .Values.cloudflare.enabled }}
+      # Wait for cloudflared sidecar to be ready
+      # Ensures tunnel is established before relayer tries to connect
+      - name: wait-for-tunnel
+        image: busybox:latest
+        imagePullPolicy: IfNotPresent
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for Cloudflare tunnel..."
+            max_wait=60
+            wait_time=0
+            until nc -z localhost 8080 2>/dev/null; do
+              if [ $wait_time -ge $max_wait ]; then
+                echo "ERROR: Tunnel did not start within ${max_wait}s"
+                exit 1
+              fi
+              echo "Tunnel not ready, waiting..."
+              sleep 2
+              wait_time=$((wait_time + 2))
+            done
+            echo "✓ Tunnel is ready"
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 32Mi
+      {{- end }}
+      
+      {{/*
+      =============================================
+      Main Containers
+      =============================================
+      */}}
+      containers:
+      # ===== Relayer Container =====
+      - name: relayer
+        image: {{ include "consonant-relayer.relayerImage" . }}
+        imagePullPolicy: {{ .Values.relayer.image.pullPolicy }}
+        
+        # Container security context
+        securityContext:
+          {{- toYaml .Values.relayer.securityContext | nindent 10 }}
+        
+        # Environment variables
+        env:
+        # ===== Core Configuration =====
+        - name: NODE_ENV
+          value: "production"
+        
+        - name: LOG_LEVEL
+          value: {{ .Values.relayer.logLevel | quote }}
+        
+        # ===== Cluster Identity =====
+        # Read from secret created by pre-install hook
+        - name: CLUSTER_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "consonant-relayer.clusterSecretName" . }}
+              key: clusterId
+        
+        - name: CLUSTER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "consonant-relayer.clusterSecretName" . }}
+              key: clusterToken
+        
+        - name: CLUSTER_NAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "consonant-relayer.clusterSecretName" . }}
+              key: clusterName
+        
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        
+        # ===== Backend Connection =====
+        # WebSocket URL (ws:// or wss://)
+        - name: BACKEND_WS_URL
+          value: {{ include "consonant-relayer.backendWsUrl" . | quote }}
+        
+        # Socket.io configuration
+        - name: SOCKET_RECONNECTION
+          value: {{ .Values.backend.reconnection.enabled | quote }}
+        
+        - name: SOCKET_RECONNECTION_DELAY
+          value: {{ .Values.backend.reconnection.delay | quote }}
+        
+        - name: SOCKET_RECONNECTION_DELAY_MAX
+          value: {{ .Values.backend.reconnection.maxDelay | quote }}
+        
+        - name: SOCKET_RECONNECTION_ATTEMPTS
+          value: {{ .Values.backend.reconnection.attempts | quote }}
+        
+        # ===== OTEL Configuration =====
+        - name: OTEL_PORT
+          value: {{ .Values.relayer.otel.port | quote }}
+        
+        - name: OTEL_BATCH_SIZE
+          value: {{ .Values.relayer.otel.batchSize | quote }}
+        
+        - name: OTEL_FLUSH_INTERVAL
+          value: {{ .Values.relayer.otel.flushInterval | quote }}
+        
+        # ===== Health Check Configuration =====
+        - name: HEALTH_PORT
+          value: {{ .Values.relayer.health.port | quote }}
+        
+        # Container ports
+        ports:
+        # OTEL collector port (receives from KAgent)
+        - name: otel
+          containerPort: {{ .Values.relayer.otel.port }}
+          protocol: TCP
+        
+        # Health check port
+        - name: health
+          containerPort: {{ .Values.relayer.health.port }}
+          protocol: TCP
+        
+        # ===== Liveness Probe =====
+        # Checks if container is alive
+        # If fails, K8s restarts the container
+        livenessProbe:
+          httpGet:
+            path: /liveness
+            port: health
+            scheme: HTTP
+          initialDelaySeconds: {{ .Values.relayer.health.liveness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.relayer.health.liveness.periodSeconds }}
+          timeoutSeconds: {{ .Values.relayer.health.liveness.timeoutSeconds }}
+          failureThreshold: {{ .Values.relayer.health.liveness.failureThreshold }}
+          successThreshold: 1
+        
+        # ===== Readiness Probe =====
+        # Checks if container is ready to receive traffic
+        # If fails, K8s removes pod from service endpoints
+        readinessProbe:
+          httpGet:
+            path: /readiness
+            port: health
+            scheme: HTTP
+          initialDelaySeconds: {{ .Values.relayer.health.readiness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.relayer.health.readiness.periodSeconds }}
+          timeoutSeconds: {{ .Values.relayer.health.readiness.timeoutSeconds }}
+          failureThreshold: {{ .Values.relayer.health.readiness.failureThreshold }}
+          successThreshold: 1
+        
+        # ===== Startup Probe =====
+        # Checks if container has started successfully
+        # Disables liveness/readiness until this passes
+        # Useful for slow-starting applications
+        startupProbe:
+          httpGet:
+            path: /health
+            port: health
+            scheme: HTTP
+          initialDelaySeconds: {{ .Values.relayer.health.startup.initialDelaySeconds }}
+          periodSeconds: {{ .Values.relayer.health.startup.periodSeconds }}
+          timeoutSeconds: {{ .Values.relayer.health.startup.timeoutSeconds }}
+          failureThreshold: {{ .Values.relayer.health.startup.failureThreshold }}
+          successThreshold: 1
+        
+        # Resource requests and limits
+        resources:
+          {{- toYaml .Values.relayer.resources | nindent 10 }}
+        
+        # Volume mounts
+        volumeMounts:
+        # Temporary directory (required for readOnlyRootFilesystem)
+        - name: tmp
+          mountPath: /tmp
+        
+        # Cache directory for Node.js
+        - name: cache
+          mountPath: /.npm
+      
+      {{- if .Values.cloudflare.enabled }}
+      # ===== Cloudflared Sidecar =====
+      # Runs alongside relayer in same pod
+      # Establishes Cloudflare tunnel
+      - name: cloudflared
+        image: {{ include "consonant-relayer.cloudflaredImage" . }}
+        imagePullPolicy: {{ .Values.cloudflare.sidecar.image.pullPolicy }}
+        
+        # Cloudflared command
+        args:
+          - tunnel
+          - --no-autoupdate          # Don't auto-update in container
+          - run
+          - --token
+          - $(TUNNEL_TOKEN)
+          {{- with .Values.cloudflare.sidecar.extraArgs }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+        
+        env:
+        # Tunnel token from secret
+        - name: TUNNEL_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "consonant-relayer.tunnelSecretName" . }}
+              key: token
+        
+        # Cloudflared configuration
+        - name: TUNNEL_TRANSPORT_PROTOCOL
+          value: "quic"  # QUIC is faster than HTTP/2
+        
+        - name: TUNNEL_LOGLEVEL
+          value: "info"
+        
+        # Metrics port (can be used for monitoring)
+        - name: TUNNEL_METRICS
+          value: "0.0.0.0:2000"
+        
+        ports:
+        # HTTP proxy port (relayer connects here)
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        
+        # Metrics port
+        - name: metrics
+          containerPort: 2000
+          protocol: TCP
+        
+        # Readiness probe
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: metrics
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        # Liveness probe
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: metrics
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        resources:
+          {{- toYaml .Values.cloudflare.sidecar.resources | nindent 10 }}
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532  # nonroot user in cloudflared image
+      {{- end }}
+      
+      {{/*
+      =============================================
+      Volumes
+      =============================================
+      */}}
+      volumes:
+      # Temporary directory (emptyDir = ephemeral)
+      - name: tmp
+        emptyDir: {}
+      
+      # Cache directory for Node.js
+      - name: cache
+        emptyDir: {}
+      
+      {{/*
+      =============================================
+      Pod Scheduling
+      =============================================
+      */}}
+      # Node selector (schedule pods on specific nodes)
+      {{- with .Values.relayer.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      
+      # Tolerations (allow scheduling on tainted nodes)
+      {{- with .Values.relayer.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      
+      # Affinity rules (prefer/require certain node characteristics)
+      {{- with .Values.relayer.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      
+      # DNS policy
+      dnsPolicy: ClusterFirst
+      
+      # Restart policy
+      restartPolicy: Always
+      
+      # Termination grace period (time to gracefully shut down)
+      terminationGracePeriodSeconds: 30

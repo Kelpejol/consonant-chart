@@ -1,0 +1,77 @@
+# Chart.yaml - Helm chart metadata
+# This file defines the chart identity, version, and dependencies
+
+apiVersion: v2
+name: consonant-relayer
+description: Consonant Relayer 
+type: application
+
+# Chart version - increment this when making changes to the chart
+# Follows SemVer 1.0.0
+# This is the chart version, not the application version
+version: 1.0.0
+
+# Application version - the version of the relayer application
+# This is what gets deployed
+appVersion: "1.0.0"
+
+# Keywords for Helm Hub / Artifact Hub
+keywords:
+  - ai
+  - control plane
+  - relayer
+  - kubernetes
+  - agents
+  - orchestration
+  - multi agents
+# Maintainers
+maintainers:
+  - name: Consonant Team
+    email: support@consonant.xyz
+    url: https://consonant.xyz
+
+# Chart dependencies
+# We bundle KAgent so users get everything in one install
+dependencies:
+  # KAgent CRDs must be installed first
+  - name: kagent-crds
+    version: "0.7.x"
+    repository: "oci://ghcr.io/kagent-dev/kagent/helm"
+    condition: kagent.installCRDs
+    
+  # KAgent itself
+  - name: kagent
+    version: "0.7.x"
+    repository: "oci://ghcr.io/kagent-dev/kagent/helm"
+    condition: kagent.enabled
+
+# Annotations for Helm Hub / Artifact Hub
+annotations:
+  # Category
+  category: Ai control plane
+  
+  # License
+  licenses: Apache-2.0
+  
+  # Images used by this chart
+  images: |
+    - name: consonant-relayer
+      image: ghcr.io/consonant/relayer:1.0.0
+    - name: cloudflared
+      image: cloudflare/cloudflared:2025.11.1
+  
+  # Links
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://docs.consonant.xyz
+    - name: GitHub
+      url: https://github.com/consonant/consonant
+  
+  # Changelog
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial release with Cloudflare Tunnel support
+    - kind: added
+      description: KAgent integration with minimal configuration
+    - kind: added
+      description: Connection to control plane via secure tunnels

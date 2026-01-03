@@ -1,0 +1,105 @@
+{{- if .Values.networkPolicy.enabled }}
+---
+# NetworkPolicy - Restrict Pod Communication
+# Limits traffic to only what's necessary for operation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}-relayer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "consonant-relayer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: relayer
+  
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow OTEL from KAgent
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kagent
+    ports:
+    - protocol: TCP
+      port: {{ .Values.relayer.otel.port }}
+  
+  # Allow health checks from anywhere in cluster
+  - ports:
+    - protocol: TCP
+      port: {{ .Values.relayer.health.port }}
+  
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53
+  
+  # Allow connection to Cloudflared sidecar (localhost)
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "consonant-relayer.selectorLabels" . | nindent 10 }}
+    ports:
+    - protocol: TCP
+      port: 8080
+  
+  # Allow Kubernetes API
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 6443
+
+---
+# NetworkPolicy for KAgent
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}-kagent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kagent
+  
+  policyTypes:
+  - Egress
+  
+  egress:
+  # Allow OTEL to relayer
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "consonant-relayer.selectorLabels" . | nindent 10 }}
+    ports:
+    - protocol: TCP
+      port: {{ .Values.relayer.otel.port }}
+  
+  # Allow DNS
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53
+  
+  # Allow internet for LLM APIs
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+{{- end }}

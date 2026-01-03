@@ -31,14 +31,238 @@ WHY THESE PERMISSIONS:
 - Deployments check KAgent controller health
 */}}
 
+# {{- if .Values.rbac.create }}
+
+# {{/*
+# =============================================
+# ServiceAccount
+# =============================================
+# Identity for relayer pods
+# Pods authenticate to K8s API using this SA
+# */}}
+# ---
+# apiVersion: v1
+# kind: ServiceAccount
+# metadata:
+#   name: {{ include "consonant-relayer.serviceAccountName" . }}
+#   namespace: {{ .Release.Namespace }}
+#   labels:
+#     {{- include "consonant-relayer.labels" . | nindent 4 }}
+#     app.kubernetes.io/component: rbac
+#   {{- with .Values.serviceAccount.annotations }}
+#   annotations:
+#     {{- toYaml . | nindent 4 }}
+#   {{- end }}
+# {{- if .Values.relayer.imagePullSecrets }}
+# imagePullSecrets:
+#   {{- toYaml .Values.relayer.imagePullSecrets | nindent 2 }}
+# {{- end }}
+
+# {{/*
+# =============================================
+# Role (Namespace-Scoped)
+# =============================================
+# Defines what the service account can do
+# Only applies to resources in this namespace
+# */}}
+# ---
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: Role
+# metadata:
+#   name: {{ include "consonant-relayer.fullname" . }}
+#   namespace: {{ .Release.Namespace }}
+#   labels:
+#     {{- include "consonant-relayer.labels" . | nindent 4 }}
+#     app.kubernetes.io/component: rbac
+#   {{- with (include "consonant-relayer.annotations" .) }}
+#   annotations:
+#     {{- . | nindent 4 }}
+#   {{- end }}
+# rules:
+# # ===== KAgent CRDs =====
+# # Watch agent definitions and runs
+# - apiGroups: ["kagent.dev"]
+#   resources:
+#     - agents
+#     - agentruntimes
+#     - agentruns
+#   verbs:
+#     - get      # Read single resource
+#     - list     # List all resources
+#     - watch    # Watch for changes (used by informers)
+#     - create   # Create agent runs (for invocations)
+
+# # ===== Pods =====
+# # Monitor agent pods and read their logs
+# - apiGroups: [""]
+#   resources:
+#     - pods
+#     - pods/log
+#   verbs:
+#     - get
+#     - list
+#     - watch
+
+# # ===== Events =====
+# # Track K8s events (pod failures, OOMKilled, etc.)
+# - apiGroups: [""]
+#   resources:
+#     - events
+#   verbs:
+#     - get
+#     - list
+#     - watch
+
+# # ===== ConfigMaps =====
+# # Read KAgent configuration for validation
+# - apiGroups: [""]
+#   resources:
+#     - configmaps
+#   verbs:
+#     - get
+#     - list
+
+# # ===== Deployments =====
+# # Check if KAgent controller is healthy
+# - apiGroups: ["apps"]
+#   resources:
+#     - deployments
+#   verbs:
+#     - get
+#     - list
+
+# # ===== Secrets =====
+# # Pre-install hook needs to create cluster credentials secret
+# # Regular relayer pods don't need this, but SA is shared
+# - apiGroups: [""]
+#   resources:
+#     - secrets
+#   verbs:
+#     - create   # Create cluster credentials (pre-install hook)
+#     - get      # Read own secrets
+#     - patch    # Update secrets if needed
+
+# {{- with .Values.rbac.additionalRules }}
+# # ===== Additional Rules (from values) =====
+# {{- toYaml . | nindent 0 }}
+# {{- end }}
+
+# {{/*
+# =============================================
+# RoleBinding
+# =============================================
+# Binds the Role to the ServiceAccount
+# Grants the permissions to the relayer
+# */}}
+# ---
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: RoleBinding
+# metadata:
+#   name: {{ include "consonant-relayer.fullname" . }}
+#   namespace: {{ .Release.Namespace }}
+#   labels:
+#     {{- include "consonant-relayer.labels" . | nindent 4 }}
+#     app.kubernetes.io/component: rbac
+#   {{- with (include "consonant-relayer.annotations" .) }}
+#   annotations:
+#     {{- . | nindent 4 }}
+#   {{- end }}
+# subjects:
+# # Who gets the permissions
+# - kind: ServiceAccount
+#   name: {{ include "consonant-relayer.serviceAccountName" . }}
+#   namespace: {{ .Release.Namespace }}
+# roleRef:
+#   # What permissions they get
+#   kind: Role
+#   name: {{ include "consonant-relayer.fullname" . }}
+#   apiGroup: rbac.authorization.k8s.io
+
+# {{- end }}
+
+
+
 {{- if .Values.rbac.create }}
 
 {{/*
 =============================================
-ServiceAccount
+Hook ServiceAccount (Elevated Privileges)
 =============================================
-Identity for relayer pods
-Pods authenticate to K8s API using this SA
+Used only by pre-install hooks
+Can create/delete resources
+Automatically cleaned up after hooks complete
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}-hook
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hook
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+
+---
+# Hook Role (elevated permissions)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}-hook
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hook
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+# Create secrets (for cluster registration)
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [create, get, patch]
+
+# Delete resources (for KAgent cleanup)
+- apiGroups: ["apps"]
+  resources: [deployments]
+  verbs: [delete, list]
+
+- apiGroups: [""]
+  resources: [services, configmaps]
+  verbs: [delete, list]
+
+---
+# Hook RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}-hook
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hook
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+subjects:
+- kind: ServiceAccount
+  name: {{ include "consonant-relayer.fullname" . }}-hook
+roleRef:
+  kind: Role
+  name: {{ include "consonant-relayer.fullname" . }}-hook
+  apiGroup: rbac.authorization.k8s.io
+
+{{/*
+=============================================
+Runtime ServiceAccount (Minimal Privileges)
+=============================================
+Used by relayer pods during normal operation
+Read-only access to specific secrets
 */}}
 ---
 apiVersion: v1
@@ -58,14 +282,8 @@ imagePullSecrets:
   {{- toYaml .Values.relayer.imagePullSecrets | nindent 2 }}
 {{- end }}
 
-{{/*
-=============================================
-Role (Namespace-Scoped)
-=============================================
-Defines what the service account can do
-Only applies to resources in this namespace
-*/}}
 ---
+# Runtime Role (minimal permissions)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -74,87 +292,39 @@ metadata:
   labels:
     {{- include "consonant-relayer.labels" . | nindent 4 }}
     app.kubernetes.io/component: rbac
-  {{- with (include "consonant-relayer.annotations" .) }}
-  annotations:
-    {{- . | nindent 4 }}
-  {{- end }}
 rules:
-# ===== KAgent CRDs =====
-# Watch agent definitions and runs
-- apiGroups: ["kagent.dev"]
-  resources:
-    - agents
-    - agentruntimes
-    - agentruns
-  verbs:
-    - get      # Read single resource
-    - list     # List all resources
-    - watch    # Watch for changes (used by informers)
-    - create   # Create agent runs (for invocations)
-
-# ===== Pods =====
-# Monitor agent pods and read their logs
+# Read Events (for monitoring)
 - apiGroups: [""]
-  resources:
-    - pods
-    - pods/log
-  verbs:
-    - get
-    - list
-    - watch
+  resources: [events]
+  verbs: [get, list, watch]
 
-# ===== Events =====
-# Track K8s events (pod failures, OOMKilled, etc.)
+# Read Namespaces (for cluster info)
 - apiGroups: [""]
-  resources:
-    - events
-  verbs:
-    - get
-    - list
-    - watch
+  resources: [namespaces]
+  verbs: [get, list]
 
-# ===== ConfigMaps =====
-# Read KAgent configuration for validation
+# Read Nodes (for cluster health)
 - apiGroups: [""]
-  resources:
-    - configmaps
-  verbs:
-    - get
-    - list
+  resources: [nodes]
+  verbs: [get, list]
 
-# ===== Deployments =====
-# Check if KAgent controller is healthy
-- apiGroups: ["apps"]
-  resources:
-    - deployments
-  verbs:
-    - get
-    - list
-
-# ===== Secrets =====
-# Pre-install hook needs to create cluster credentials secret
-# Regular relayer pods don't need this, but SA is shared
+# Read specific secrets only
 - apiGroups: [""]
-  resources:
-    - secrets
-  verbs:
-    - create   # Create cluster credentials (pre-install hook)
-    - get      # Read own secrets
-    - patch    # Update secrets if needed
+  resources: [secrets]
+  verbs: [get]
+  resourceNames:
+    - {{ include "consonant-relayer.clusterSecretName" . }}
+    - {{ include "consonant-relayer.llmSecretName" . }}
+    {{- if .Values.cloudflare.enabled }}
+    - {{ include "consonant-relayer.tunnelSecretName" . }}
+    {{- end }}
 
 {{- with .Values.rbac.additionalRules }}
-# ===== Additional Rules (from values) =====
 {{- toYaml . | nindent 0 }}
 {{- end }}
 
-{{/*
-=============================================
-RoleBinding
-=============================================
-Binds the Role to the ServiceAccount
-Grants the permissions to the relayer
-*/}}
 ---
+# Runtime RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -163,17 +333,10 @@ metadata:
   labels:
     {{- include "consonant-relayer.labels" . | nindent 4 }}
     app.kubernetes.io/component: rbac
-  {{- with (include "consonant-relayer.annotations" .) }}
-  annotations:
-    {{- . | nindent 4 }}
-  {{- end }}
 subjects:
-# Who gets the permissions
 - kind: ServiceAccount
   name: {{ include "consonant-relayer.serviceAccountName" . }}
-  namespace: {{ .Release.Namespace }}
 roleRef:
-  # What permissions they get
   kind: Role
   name: {{ include "consonant-relayer.fullname" . }}
   apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,119 @@
+{{- if .Values.kagent.enabled }}
+---
+# ConfigMap with KAgent cleanup script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}-kagent-cleanup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kagent-cleanup
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+data:
+  cleanup.sh: |
+    #!/bin/sh
+    set -e
+    
+    echo "======================================"
+    echo "  KAgent Cleanup Check"
+    echo "======================================"
+    echo ""
+    
+    # Check if KAgent exists in this namespace
+    if kubectl get deployment -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent 2>/dev/null | grep -q kagent; then
+      echo "⚠️  Found existing KAgent in {{ .Release.Namespace }}"
+      echo ""
+      echo "This chart will:"
+      echo "  ✓ Remove KAgent Deployments, Services, ConfigMaps"
+      echo "  ✓ Keep cluster-scoped resources (CRDs, ClusterRoles)"
+      echo "  ✓ Install Consonant-configured KAgent"
+      echo ""
+      
+      # Check if managed by Helm
+      if helm list -n {{ .Release.Namespace }} 2>/dev/null | grep -q kagent; then
+        echo "Uninstalling Helm release 'kagent'..."
+        helm uninstall kagent -n {{ .Release.Namespace }} --wait || true
+        echo "✓ Helm release removed"
+      else
+        echo "Removing KAgent resources..."
+        kubectl delete deployment -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent --ignore-not-found=true
+        kubectl delete service -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent --ignore-not-found=true
+        kubectl delete configmap -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent --ignore-not-found=true
+        echo "✓ Resources removed"
+      fi
+      
+      echo ""
+      echo "Waiting for cleanup..."
+      sleep 5
+      echo "✓ Cleanup complete"
+    else
+      echo "✓ No existing KAgent found in {{ .Release.Namespace }}"
+    fi
+    
+    echo "======================================"
+
+---
+# Job to run cleanup script
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}-kagent-cleanup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kagent-cleanup
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "consonant-relayer.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: kagent-cleanup
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "consonant-relayer.fullname" . }}-hook
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: cleanup
+        image: bitnami/kubectl:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "/scripts/cleanup.sh"]
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+        - name: tmp
+          mountPath: /tmp
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+          readOnlyRootFilesystem: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+      volumes:
+      - name: scripts
+        configMap:
+          name: {{ include "consonant-relayer.fullname" . }}-kagent-cleanup
+          defaultMode: 0755
+      - name: tmp
+        emptyDir: {}
+{{- end }}

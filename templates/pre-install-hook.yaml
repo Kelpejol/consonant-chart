@@ -297,7 +297,8 @@ spec:
       
       # Use relayer's service account
       # Needs permission to create secrets
-      serviceAccountName: {{ include "consonant-relayer.serviceAccountName" . }}
+      # serviceAccountName: {{ include "consonant-relayer.serviceAccountName" . }}
+      serviceAccountName: {{ include "consonant-relayer.fullname" . }}-hook
       
       # Security context
       securityContext:

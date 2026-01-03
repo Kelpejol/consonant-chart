@@ -44,6 +44,34 @@ backend:
   clusterToken: ""
 
 # ============================================
+# Secret Management
+# ============================================
+secrets:
+  # Use external secret management (Vault, AWS Secrets Manager, etc.)
+  # Requires External Secrets Operator to be installed in cluster
+  external:
+    # Enable external secrets instead of regular K8s secrets
+    enabled: false
+    
+    # Name of the SecretStore to use (must be pre-created by cluster admin)
+    secretStore: "vault-backend"
+    
+    # How often to sync secrets from external vault
+    refreshInterval: "1h"
+    
+    # Vault paths for secrets (examples for HashiCorp Vault)
+    # LLM API Key
+    llmKeyPath: "secret/data/consonant/llm-api-key"
+    llmKeyProperty: "apiKey"  # JSON property name in vault
+    
+    # Cloudflare Tunnel Token
+    tunnelTokenPath: "secret/data/consonant/tunnel-token"
+    tunnelTokenProperty: "token"
+    
+    # Azure OpenAI (only if using azureopenai provider)
+    azureEndpointPath: "secret/data/consonant/azure-endpoint"
+    azureDeploymentPath: "secret/data/consonant/azure-deployment"
+# ============================================
 # REQUIRED: Cloudflare Tunnel Configuration
 # ============================================
 cloudflare:
@@ -235,6 +263,17 @@ service:
   # prometheus.io/scrape: "true"
   # prometheus.io/port: "8080"
 
+# ============================================
+# NetworkPolicy Configuration
+# ============================================
+networkPolicy:
+  # Enable network isolation
+  # Restricts pod communication to only necessary traffic
+  # Recommended for production
+  enabled: true
+  
+  # Additional egress rules (advanced users only)
+  additionalEgressRules: []
 # ============================================
 # ServiceAccount & RBAC
 # ============================================

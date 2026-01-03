@@ -335,6 +335,28 @@ spec:
           failureThreshold: {{ .Values.relayer.health.startup.failureThreshold }}
           successThreshold: 1
         
+          # Lifecycle hooks
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                # Wait for backend connection
+                max_wait=30
+                count=0
+                while [ $count -lt $max_wait ]; do
+                  if wget -q -O- http://localhost:${HEALTH_PORT}/readiness 2>/dev/null | grep -q '"connected":true'; then
+                    echo "✓ Connected to backend successfully"
+                    exit 0
+                  fi
+                  echo "Waiting for backend connection... ($count/$max_wait)"
+                  sleep 2
+                  count=$((count + 1))
+                done
+                echo "⚠️  Warning: Backend connection not established within ${max_wait}s"
+                exit 0
         # Resource requests and limits
         resources:
           {{- toYaml .Values.relayer.resources | nindent 10 }}

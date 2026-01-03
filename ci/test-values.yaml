@@ -1,0 +1,138 @@
+# ci/test-values.yaml
+# Values for CI/CD testing
+# Minimal configuration for automated testing
+
+###########################################
+# CLUSTER CONFIGURATION (TEST)
+###########################################
+cluster:
+  name: "ci-test-cluster"
+  environment: "test"
+  region: "ci"
+  metadata:
+    ci: "true"
+    ephemeral: "true"
+
+###########################################
+# BACKEND CONFIGURATION (MOCK)
+###########################################
+backend:
+  # Use mock backend service
+  url: "http://mock-backend.test-system:3000"
+  
+  # Shorter timeouts for faster tests
+  connectionTimeout: 5
+  
+  # Disable registration (use pre-created credentials)
+  credentials:
+    existingSecret: "test-cluster-credentials"
+  
+  # Faster reconnection for tests
+  reconnection:
+    enabled: true
+    delay: 100
+    maxDelay: 1000
+    multiplier: 1.5
+  
+  # Aggressive circuit breaker for tests
+  circuitBreaker:
+    enabled: true
+    failureThreshold: 3
+    timeout: 10
+
+###########################################
+# SECRETS (KUBERNETES FOR CI)
+###########################################
+secrets:
+  mode: "kubernetes"
+  kubernetes:
+    llmApiKey: "test-api-key-not-real"
+    tunnelToken: "eyJhIjoitest-token-not-real"
+
+###########################################
+# CLOUDFLARE (DISABLED FOR CI)
+###########################################
+cloudflare:
+  enabled: false
+
+###########################################
+# LLM CONFIGURATION (MOCK)
+###########################################
+llm:
+  provider: "anthropic"
+  model: "claude-3-5-sonnet-20241022"
+  
+  # Disable validation for CI
+  validation:
+    enabled: false
+
+###########################################
+# RELAYER CONFIGURATION (MINIMAL)
+###########################################
+relayer:
+  # Single replica for CI
+  replicas: 1
+  
+  image:
+    repository: ghcr.io/consonant/relayer
+    tag: "latest"
+    pullPolicy: Always
+  
+  # Minimal resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  
+  # Debug logging
+  logging:
+    level: "debug"
+    format: "json"
+  
+  # Shorter health check intervals
+  livenessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  readinessProbe:
+    initialDelaySeconds: 3
+    periodSeconds: 3
+  startupProbe:
+    initialDelaySeconds: 0
+    periodSeconds: 2
+    failureThreshold: 30
+
+###########################################
+# NETWORK POLICY (PERMISSIVE FOR CI)
+###########################################
+networkPolicy:
+  enabled: false
+
+###########################################
+# POD DISRUPTION BUDGET (DISABLED FOR CI)
+###########################################
+podDisruptionBudget:
+  enabled: false
+
+###########################################
+# SERVICE MONITOR (DISABLED FOR CI)
+###########################################
+serviceMonitor:
+  enabled: false
+
+###########################################
+# KAGENT (DISABLED FOR CI)
+###########################################
+kagent:
+  enabled: false
+
+###########################################
+# HOOKS (MINIMAL FOR CI)
+###########################################
+hooks:
+  registration:
+    enabled: false  # Use pre-created credentials
+  cleanup:
+    enabled: false

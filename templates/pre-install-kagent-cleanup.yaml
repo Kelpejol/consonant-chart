@@ -1,114 +1,296 @@
+{{/*
+KAgent Cleanup Hook - Remove Conflicting Installations
+======================================================
+Cleans up any existing KAgent installations before installing ours
+Prevents conflicts and version mismatches
+*/}}
+
 {{- if .Values.kagent.enabled }}
+
 ---
-# ConfigMap with KAgent cleanup script
+# Cleanup script ConfigMap
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ include "consonant-relayer.fullname" . }}-kagent-cleanup
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "consonant-relayer.namespace" . }}
   labels:
     {{- include "consonant-relayer.labels" . | nindent 4 }}
     app.kubernetes.io/component: kagent-cleanup
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
-    "helm.sh/hook-weight": "-15"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-30"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 data:
   cleanup.sh: |
     #!/bin/sh
     set -e
     
-    echo "======================================"
+    echo "=============================================="
     echo "  KAgent Cleanup Check"
-    echo "======================================"
+    echo "  Version: {{ .Chart.Version }}"
+    echo "=============================================="
     echo ""
     
-    # Check if KAgent exists in this namespace
-    if kubectl get deployment -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent 2>/dev/null | grep -q kagent; then
-      echo "⚠️  Found existing KAgent in {{ .Release.Namespace }}"
-      echo ""
-      echo "This chart will:"
-      echo "  ✓ Remove KAgent Deployments, Services, ConfigMaps"
-      echo "  ✓ Keep cluster-scoped resources (CRDs, ClusterRoles)"
-      echo "  ✓ Install Consonant-configured KAgent"
-      echo ""
-      
-      # Check if managed by Helm
-      if helm list -n {{ .Release.Namespace }} 2>/dev/null | grep -q kagent; then
-        echo "Uninstalling Helm release 'kagent'..."
-        helm uninstall kagent -n {{ .Release.Namespace }} --wait || true
-        echo "✓ Helm release removed"
-      else
-        echo "Removing KAgent resources..."
-        kubectl delete deployment -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent --ignore-not-found=true
-        kubectl delete service -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent --ignore-not-found=true
-        kubectl delete configmap -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent --ignore-not-found=true
-        echo "✓ Resources removed"
-      fi
-      
-      echo ""
-      echo "Waiting for cleanup..."
-      sleep 5
-      echo "✓ Cleanup complete"
-    else
-      echo "✓ No existing KAgent found in {{ .Release.Namespace }}"
+    NAMESPACE="{{ include "consonant-relayer.namespace" . }}"
+    
+    # ====================================
+    # Check for existing KAgent
+    # ====================================
+    echo "🔍 Checking for existing KAgent installations..."
+    
+    kagent_found=false
+    
+    # Check deployments
+    if kubectl get deployment -n "$NAMESPACE" -l app.kubernetes.io/name=kagent 2>/dev/null | grep -q kagent; then
+      kagent_found=true
+      echo "   ✓ Found KAgent deployments"
     fi
     
-    echo "======================================"
+    # Check services
+    if kubectl get service -n "$NAMESPACE" -l app.kubernetes.io/name=kagent 2>/dev/null | grep -q kagent; then
+      kagent_found=true
+      echo "   ✓ Found KAgent services"
+    fi
+    
+    # Check configmaps
+    if kubectl get configmap -n "$NAMESPACE" -l app.kubernetes.io/name=kagent 2>/dev/null | grep -q kagent; then
+      kagent_found=true
+      echo "   ✓ Found KAgent configmaps"
+    fi
+    
+    if [ "$kagent_found" = "false" ]; then
+      echo "✅ No existing KAgent installation found"
+      echo ""
+      echo "Proceeding with fresh installation..."
+      exit 0
+    fi
+    
+    echo ""
+    echo "⚠️  Found existing KAgent installation in namespace: $NAMESPACE"
+    echo ""
+    echo "Actions to be taken:"
+    echo "  → Remove namespace-scoped KAgent resources"
+    echo "  → Keep cluster-scoped resources (CRDs, ClusterRoles)"
+    echo "  → Install Consonant-managed KAgent"
+    echo ""
+    
+    # ====================================
+    # Check if managed by Helm
+    # ====================================
+    echo "🔍 Checking if KAgent is managed by Helm..."
+    
+    if helm list -n "$NAMESPACE" 2>/dev/null | grep -qw kagent; then
+      echo "   ✓ Found Helm release: kagent"
+      echo ""
+      echo "🗑️  Uninstalling Helm release..."
+      
+      if helm uninstall kagent -n "$NAMESPACE" --wait 2>/dev/null; then
+        echo "   ✅ Helm release removed"
+      else
+        echo "   ⚠️  Helm uninstall failed, continuing with manual cleanup"
+      fi
+    else
+      echo "   ℹ️  Not managed by Helm, proceeding with manual cleanup"
+    fi
+    
+    echo ""
+    
+    # ====================================
+    # Manual cleanup
+    # ====================================
+    echo "🧹 Cleaning up KAgent resources..."
+    
+    # Remove deployments
+    echo "   Removing deployments..."
+    kubectl delete deployment -n "$NAMESPACE" \
+      -l app.kubernetes.io/name=kagent \
+      --ignore-not-found=true \
+      --timeout=60s || true
+    
+    # Remove services
+    echo "   Removing services..."
+    kubectl delete service -n "$NAMESPACE" \
+      -l app.kubernetes.io/name=kagent \
+      --ignore-not-found=true \
+      --timeout=30s || true
+    
+    # Remove configmaps
+    echo "   Removing configmaps..."
+    kubectl delete configmap -n "$NAMESPACE" \
+      -l app.kubernetes.io/name=kagent \
+      --ignore-not-found=true \
+      --timeout=30s || true
+    
+    # Remove secrets (be careful here)
+    echo "   Checking for KAgent secrets..."
+    kagent_secrets=$(kubectl get secret -n "$NAMESPACE" \
+      -l app.kubernetes.io/name=kagent \
+      -o name 2>/dev/null || true)
+    
+    if [ -n "$kagent_secrets" ]; then
+      echo "   ⚠️  Found KAgent secrets:"
+      echo "$kagent_secrets" | sed 's/^/      - /'
+      echo ""
+      echo "   ℹ️  Not removing secrets automatically for safety"
+      echo "   To remove manually:"
+      echo "      kubectl delete secret -n $NAMESPACE -l app.kubernetes.io/name=kagent"
+    fi
+    
+    # Remove statefulsets if any
+    echo "   Removing statefulsets..."
+    kubectl delete statefulset -n "$NAMESPACE" \
+      -l app.kubernetes.io/name=kagent \
+      --ignore-not-found=true \
+      --timeout=60s || true
+    
+    # Remove PVCs if any
+    echo "   Checking for PVCs..."
+    kagent_pvcs=$(kubectl get pvc -n "$NAMESPACE" \
+      -l app.kubernetes.io/name=kagent \
+      -o name 2>/dev/null || true)
+    
+    if [ -n "$kagent_pvcs" ]; then
+      echo "   ⚠️  Found KAgent PVCs:"
+      echo "$kagent_pvcs" | sed 's/^/      - /'
+      echo ""
+      echo "   ℹ️  Not removing PVCs automatically to prevent data loss"
+      echo "   To remove manually:"
+      echo "      kubectl delete pvc -n $NAMESPACE -l app.kubernetes.io/name=kagent"
+    fi
+    
+    echo ""
+    
+    # ====================================
+    # Verification
+    # ====================================
+    echo "🔍 Verifying cleanup..."
+    
+    remaining_resources=false
+    
+    if kubectl get deployment -n "$NAMESPACE" -l app.kubernetes.io/name=kagent 2>/dev/null | grep -q kagent; then
+      echo "   ⚠️  Warning: Some deployments still exist"
+      remaining_resources=true
+    fi
+    
+    if kubectl get service -n "$NAMESPACE" -l app.kubernetes.io/name=kagent 2>/dev/null | grep -q kagent; then
+      echo "   ⚠️  Warning: Some services still exist"
+      remaining_resources=true
+    fi
+    
+    if [ "$remaining_resources" = "true" ]; then
+      echo ""
+      echo "⚠️  Warning: Some resources could not be removed"
+      echo "   Installation will continue, but conflicts may occur"
+      echo ""
+      echo "To force removal:"
+      echo "  kubectl delete all -n $NAMESPACE -l app.kubernetes.io/name=kagent --force --grace-period=0"
+    else
+      echo "   ✅ All resources removed successfully"
+    fi
+    
+    echo ""
+    
+    # ====================================
+    # Wait for termination
+    # ====================================
+    echo "⏳ Waiting for pods to terminate..."
+    
+    timeout=60
+    elapsed=0
+    interval=2
+    
+    while [ $elapsed -lt $timeout ]; do
+      if ! kubectl get pods -n "$NAMESPACE" \
+          -l app.kubernetes.io/name=kagent 2>/dev/null | grep -q kagent; then
+        echo "   ✅ All pods terminated"
+        break
+      fi
+      
+      sleep $interval
+      elapsed=$((elapsed + interval))
+    done
+    
+    if [ $elapsed -ge $timeout ]; then
+      echo "   ⚠️  Warning: Some pods still terminating after ${timeout}s"
+      echo "   Installation will continue anyway"
+    fi
+    
+    echo ""
+    echo "=============================================="
+    echo "  ✅ Cleanup Complete"
+    echo "=============================================="
+    echo ""
 
 ---
-# Job to run cleanup script
+# Cleanup Job
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: {{ include "consonant-relayer.fullname" . }}-kagent-cleanup
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "consonant-relayer.namespace" . }}
   labels:
     {{- include "consonant-relayer.labels" . | nindent 4 }}
     app.kubernetes.io/component: kagent-cleanup
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
-    "helm.sh/hook-weight": "-15"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-30"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
-  ttlSecondsAfterFinished: 300
-  backoffLimit: 2
+  ttlSecondsAfterFinished: {{ .Values.hooks.cleanup.ttlSecondsAfterFinished }}
+  backoffLimit: {{ .Values.hooks.cleanup.backoffLimit }}
+  
   template:
     metadata:
       labels:
         {{- include "consonant-relayer.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: kagent-cleanup
+      annotations:
+        sidecar.istio.io/inject: "false"
+        linkerd.io/inject: disabled
+    
     spec:
       restartPolicy: Never
       serviceAccountName: {{ include "consonant-relayer.fullname" . }}-hook
+      
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
         fsGroup: 65534
         seccompProfile:
           type: RuntimeDefault
+      
       containers:
       - name: cleanup
-        image: bitnami/kubectl:latest
-        imagePullPolicy: IfNotPresent
+        image: {{ include "consonant-relayer.kubectlImage" . }}
+        imagePullPolicy: {{ .Values.hooks.registration.kubectlImage.pullPolicy }}
         command: ["/bin/sh", "/scripts/cleanup.sh"]
+        
         volumeMounts:
         - name: scripts
           mountPath: /scripts
+          readOnly: true
         - name: tmp
           mountPath: /tmp
+        
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
             drop: [ALL]
           readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          seccompProfile:
+            type: RuntimeDefault
+        
         resources:
           requests:
-            cpu: 50m
-            memory: 64Mi
-          limits:
-            cpu: 200m
+            cpu: 100m
             memory: 128Mi
+          limits:
+            cpu: 300m
+            memory: 256Mi
+      
       volumes:
       - name: scripts
         configMap:
@@ -116,4 +298,5 @@ spec:
           defaultMode: 0755
       - name: tmp
         emptyDir: {}
+
 {{- end }}

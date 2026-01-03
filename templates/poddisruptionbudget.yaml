@@ -1,0 +1,41 @@
+{{/*
+PodDisruptionBudget - High Availability Protection
+==================================================
+Ensures minimum number of pods remain available during:
+- Voluntary disruptions (node drains, upgrades)
+- Cluster autoscaling
+- Rolling updates
+*/}}
+
+{{- if .Values.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "consonant-relayer.fullname" . }}
+  namespace: {{ include "consonant-relayer.namespace" . }}
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relayer
+  {{- with (include "consonant-relayer.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- else if .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  {{- fail "Either podDisruptionBudget.minAvailable or podDisruptionBudget.maxUnavailable must be set" }}
+  {{- end }}
+  
+  selector:
+    matchLabels:
+      {{- include "consonant-relayer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: relayer
+  
+  {{- if .Values.podDisruptionBudget.unhealthyPodEvictionPolicy }}
+  unhealthyPodEvictionPolicy: {{ .Values.podDisruptionBudget.unhealthyPodEvictionPolicy }}
+  {{- end }}
+{{- end }}

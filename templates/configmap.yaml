@@ -1,24 +1,16 @@
 {{/*
 ConfigMap - Non-Sensitive Configuration
 ========================================
-Stores configuration that doesn't need to be secret
-Currently minimal since most config is in env vars
-
-USAGE:
-- Can be mounted as files or exposed as environment variables
-- Changes trigger pod restart (via checksum annotation)
-
-FUTURE USE:
-- Application configuration files
-- Scripts that need to be mounted
-- Non-sensitive settings
+Stores application configuration files
+Changes trigger pod restart via checksum annotation
 */}}
+
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ include "consonant-relayer.fullname" . }}-config
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "consonant-relayer.namespace" . }}
   labels:
     {{- include "consonant-relayer.labels" . | nindent 4 }}
     app.kubernetes.io/component: configuration
@@ -30,35 +22,144 @@ data:
   # Cluster configuration
   cluster.yaml: |
     name: {{ .Values.cluster.name | quote }}
-    namespace: {{ .Values.cluster.namespace | quote }}
+    namespace: {{ include "consonant-relayer.namespace" . | quote }}
+    {{- if .Values.cluster.region }}
+    region: {{ .Values.cluster.region | quote }}
+    {{- end }}
+    {{- if .Values.cluster.environment }}
+    environment: {{ .Values.cluster.environment | quote }}
+    {{- end }}
+    {{- with .Values.cluster.metadata }}
+    metadata:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
   
   # Backend configuration
   backend.yaml: |
     url: {{ .Values.backend.url | quote }}
     socketPath: {{ .Values.backend.socketPath | quote }}
+    connectionTimeout: {{ .Values.backend.connectionTimeout }}
+    
+    circuitBreaker:
+      enabled: {{ .Values.backend.circuitBreaker.enabled }}
+      failureThreshold: {{ .Values.backend.circuitBreaker.failureThreshold }}
+      successThreshold: {{ .Values.backend.circuitBreaker.successThreshold }}
+      timeout: {{ .Values.backend.circuitBreaker.timeout }}
+      halfOpenMaxAttempts: {{ .Values.backend.circuitBreaker.halfOpenMaxAttempts }}
+    
     reconnection:
       enabled: {{ .Values.backend.reconnection.enabled }}
       delay: {{ .Values.backend.reconnection.delay }}
       maxDelay: {{ .Values.backend.reconnection.maxDelay }}
-      attempts: {{ .Values.backend.reconnection.attempts }}
+      multiplier: {{ .Values.backend.reconnection.multiplier }}
+      maxAttempts: {{ .Values.backend.reconnection.maxAttempts }}
+      randomization: {{ .Values.backend.reconnection.randomization }}
+    
+    healthCheck:
+      enabled: {{ .Values.backend.healthCheck.enabled }}
+      interval: {{ .Values.backend.healthCheck.interval }}
+      timeout: {{ .Values.backend.healthCheck.timeout }}
+      unhealthyThreshold: {{ .Values.backend.healthCheck.unhealthyThreshold }}
   
   # OTEL configuration
   otel.yaml: |
     port: {{ .Values.relayer.otel.port }}
     batchSize: {{ .Values.relayer.otel.batchSize }}
     flushInterval: {{ .Values.relayer.otel.flushInterval }}
+    maxQueueSize: {{ .Values.relayer.otel.maxQueueSize }}
+    exportTimeout: {{ .Values.relayer.otel.exportTimeout }}
+    
+    retry:
+      enabled: {{ .Values.relayer.otel.retry.enabled }}
+      initialInterval: {{ .Values.relayer.otel.retry.initialInterval }}
+      maxInterval: {{ .Values.relayer.otel.retry.maxInterval }}
+      maxElapsedTime: {{ .Values.relayer.otel.retry.maxElapsedTime }}
   
-  # Feature flags (if needed in future)
+  # LLM configuration
+  llm.yaml: |
+    provider: {{ .Values.llm.provider | quote }}
+    model: {{ .Values.llm.model | quote }}
+    
+    {{- if .Values.llm.fallbackModels }}
+    fallbackModels:
+      {{- toYaml .Values.llm.fallbackModels | nindent 6 }}
+    {{- end }}
+    
+    validation:
+      enabled: {{ .Values.llm.validation.enabled }}
+    
+    rateLimit:
+      enabled: {{ .Values.llm.rateLimit.enabled }}
+      requestsPerMinute: {{ .Values.llm.rateLimit.requestsPerMinute }}
+      burst: {{ .Values.llm.rateLimit.burst }}
+    
+    retry:
+      maxAttempts: {{ .Values.llm.retry.maxAttempts }}
+      initialDelay: {{ .Values.llm.retry.initialDelay }}
+      maxDelay: {{ .Values.llm.retry.maxDelay }}
+      multiplier: {{ .Values.llm.retry.multiplier }}
+    
+    timeout:
+      request: {{ .Values.llm.timeout.request }}
+      stream: {{ .Values.llm.timeout.stream }}
+    
+    {{- if eq .Values.llm.provider "openai" }}
+    openai:
+      baseURL: {{ .Values.llm.openai.baseURL | quote }}
+      {{- if .Values.llm.openai.organization }}
+      organization: {{ .Values.llm.openai.organization | quote }}
+      {{- end }}
+    {{- else if eq .Values.llm.provider "anthropic" }}
+    anthropic:
+      baseURL: {{ .Values.llm.anthropic.baseURL | quote }}
+      apiVersion: {{ .Values.llm.anthropic.apiVersion | quote }}
+    {{- else if eq .Values.llm.provider "gemini" }}
+    gemini:
+      baseURL: {{ .Values.llm.gemini.baseURL | quote }}
+    {{- else if eq .Values.llm.provider "ollama" }}
+    ollama:
+      baseURL: {{ .Values.llm.ollama.baseURL | quote }}
+      keepAlive: {{ .Values.llm.ollama.keepAlive | quote }}
+    {{- end }}
+  
+  # Logging configuration
+  logging.yaml: |
+    level: {{ .Values.relayer.logging.level | quote }}
+    format: {{ .Values.relayer.logging.format | quote }}
+    structured: {{ .Values.relayer.logging.structured }}
+    
+    {{- if .Values.relayer.logging.sampling.enabled }}
+    sampling:
+      enabled: true
+      initial: {{ .Values.relayer.logging.sampling.initial }}
+      thereafter: {{ .Values.relayer.logging.sampling.thereafter }}
+    {{- end }}
+  
+  # Feature flags
   features.yaml: |
     cloudflare:
       enabled: {{ .Values.cloudflare.enabled }}
     kagent:
       enabled: {{ .Values.kagent.enabled }}
+    networkPolicy:
+      enabled: {{ .Values.networkPolicy.enabled }}
+    podDisruptionBudget:
+      enabled: {{ .Values.podDisruptionBudget.enabled }}
+    serviceMonitor:
+      enabled: {{ .Values.serviceMonitor.enabled }}
+    externalSecrets:
+      enabled: {{ and (eq .Values.secrets.mode "external") .Values.secrets.external.enabled }}
   
   # Release metadata
   release.yaml: |
     name: {{ .Release.Name | quote }}
     namespace: {{ .Release.Namespace | quote }}
-    chart: {{ include "consonant-relayer.chart" . | quote }}
-    version: {{ .Chart.Version | quote }}
-    appVersion: {{ .Chart.AppVersion | quote }}
+    chart:
+      name: {{ .Chart.Name | quote }}
+      version: {{ .Chart.Version | quote }}
+    app:
+      version: {{ .Chart.AppVersion | quote }}
+    kubernetes:
+      version: {{ .Capabilities.KubeVersion.Version | quote }}
+    helm:
+      version: {{ .Capabilities.HelmVersion.Version | quote }}

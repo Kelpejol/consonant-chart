@@ -1,71 +1,18 @@
 {{/*
-Deployment - Main Relayer Application
-=======================================
-Deploys the relayer with optional Cloudflare tunnel sidecar
-
-ARCHITECTURE:
-┌─────────────────────────────────────┐
-│           Pod                        │
-│                                      │
-│  ┌─────────────┐   ┌──────────────┐│
-│  │  Relayer   │   │ Cloudflared  ││
-│  │   (main)    │   │  (sidecar)   ││
-│  │             │   │              ││
-│  │ :4317 OTEL  │   │ :8080 Tunnel ││
-│  │ :8080 Health│   │              ││
-│  │             │───▶│              ││
-│  │ Socket.io   │   │ Forwards to  ││
-│  │ → localhost │   │ Backend via  ││
-│  │              │   │ CF Tunnel    ││
-│  └─────────────┘   └──────────────┘│
-└─────────────────────────────────────┘
-         ▲
-         │ OTEL traces
-         │
-    ┌────┴────┐
-    │ KAgent  │
-    └─────────┘
-
-CONTAINERS:
-1. Relayer (main container)
-   - Receives OTEL from KAgent on :4317
-   - Connects to backend via Socket.io and Cloudflare tunnel (if enabled)
-   - Forwards telemetry to backend in real-time
-
-2. Cloudflared (sidecar, optional)
-   - Establishes Cloudflare tunnel
-   - Exposes localhost:8080
-   - Relayer connects to localhost, cloudflared forwards to backend
-
-INITIALIZATION:
-1. Pre-install hook creates cluster credentials secret
-2. Init container waits for secret to exist
-3. Main containers start
-4. Cloudflared establishes tunnel (if enabled)
-5. Relayer connects to backend
-6. Relayer registers OTEL endpoint with KAgent
-
-HEALTH CHECKS:
-- Startup probe: gives relayer time to connect (up to 150s)
-- Liveness probe: restarts pod if relayer crashes
-- Readiness probe: removes pod from service if not ready
-
-UPDATES:
-- RollingUpdate strategy (zero downtime)
-- Max 1 pod over desired count (surge)
-- Max 0 pods below desired count (unavailable)
-- This ensures old pod stays until new pod is ready
+Deployment - Production-Grade Relayer Application
+==================================================
+Complete rewrite with all security fixes and best practices
 */}}
 
-{{/* Validate required values */}}
-{{- include "consonant-relayer.validateValues" . }}
+{{/* Run all validations first */}}
+{{- include "consonant-relayer.validate.all" . }}
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "consonant-relayer.fullname" . }}
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "consonant-relayer.namespace" . }}
   labels:
     {{- include "consonant-relayer.labels" . | nindent 4 }}
     app.kubernetes.io/component: relayer
@@ -74,75 +21,129 @@ metadata:
     {{- . | nindent 4 }}
   {{- end }}
 spec:
-  # Number of replica pods
   replicas: {{ .Values.relayer.replicas }}
   
-  # Update strategy
+  {{/* Deployment strategy */}}
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1        # Allow 1 extra pod during update
-      maxUnavailable: 0  # Ensure at least 1 pod always running
+    {{- toYaml .Values.relayer.strategy | nindent 4 }}
   
-  # Selector must match pod labels
-  # This selector is IMMUTABLE - cannot be changed after creation
+  {{/* Pod selector - IMMUTABLE */}}
   selector:
     matchLabels:
       {{- include "consonant-relayer.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: relayer
   
-  # Pod template
+  {{/* Pod template */}}
   template:
     metadata:
       labels:
         {{- include "consonant-relayer.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: relayer
+        {{- with .Values.relayer.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       annotations:
-        # Force pod restart when config/secrets change
-        # SHA256 hash of ConfigMap content
+        {{/* Force restart on config/secret changes */}}
         {{- include "consonant-relayer.configChecksum" . | nindent 8 }}
-        # SHA256 hash of Secrets
-        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        {{- if not (include "consonant-relayer.useExternalSecrets" .) }}
+        {{- include "consonant-relayer.secretsChecksum" . | nindent 8 }}
+        {{- end }}
         {{- with .Values.relayer.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+    
     spec:
-      # Service account for K8s API access
+      {{/* Service account */}}
       serviceAccountName: {{ include "consonant-relayer.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       
-      # Image pull secrets (if using private registry)
-      {{- with .Values.relayer.imagePullSecrets }}
+      {{/* Image pull secrets */}}
+      {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       
-      # Pod-level security context
+      {{/* Pod security context */}}
       securityContext:
         {{- toYaml .Values.relayer.podSecurityContext | nindent 8 }}
       
+      {{/* Priority class */}}
+      {{- with .Values.relayer.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      
+      {{/* DNS configuration */}}
+      dnsPolicy: {{ .Values.relayer.dnsPolicy }}
+      {{- with .Values.relayer.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      
+      {{/* Termination grace period */}}
+      terminationGracePeriodSeconds: {{ .Values.relayer.terminationGracePeriodSeconds }}
+      
       {{/*
       =============================================
-      Init Containers
+      INIT CONTAINERS (FIXED)
       =============================================
-      Run before main containers start
-      Used to wait for dependencies
       */}}
       initContainers:
-      # Wait for cluster credentials secret to exist
-      # Pre-install hook creates this, but there's a race condition
+      {{/* Wait for cluster credentials secret */}}
       - name: wait-for-credentials
-        image: bitnami/kubectl:latest
-        imagePullPolicy: IfNotPresent
+        image: {{ include "consonant-relayer.kubectlImage" . }}
+        imagePullPolicy: {{ .Values.hooks.registration.kubectlImage.pullPolicy }}
         command:
           - sh
           - -c
           - |
-            echo "Waiting for cluster credentials secret..."
-            until kubectl get secret {{ include "consonant-relayer.clusterSecretName" . }} -n {{ .Release.Namespace }} 2>/dev/null; do
-              echo "Secret not found, waiting..."
-              sleep 2
+            set -e
+            echo "⏳ Waiting for cluster credentials secret..."
+            echo "   Secret: {{ include "consonant-relayer.clusterSecretName" . }}"
+            echo "   Namespace: {{ include "consonant-relayer.namespace" . }}"
+            
+            # ✅ FIXED: Added timeout
+            timeout=300  # 5 minutes
+            elapsed=0
+            interval=2
+            
+            while [ $elapsed -lt $timeout ]; do
+              if kubectl get secret {{ include "consonant-relayer.clusterSecretName" . }} \
+                  -n {{ include "consonant-relayer.namespace" . }} &>/dev/null; then
+                echo "✅ Credentials secret found!"
+                
+                # Verify secret has required keys
+                if kubectl get secret {{ include "consonant-relayer.clusterSecretName" . }} \
+                    -n {{ include "consonant-relayer.namespace" . }} \
+                    -o jsonpath='{.data.clusterId}' | base64 -d &>/dev/null && \
+                   kubectl get secret {{ include "consonant-relayer.clusterSecretName" . }} \
+                    -n {{ include "consonant-relayer.namespace" . }} \
+                    -o jsonpath='{.data.clusterToken}' | base64 -d &>/dev/null; then
+                  echo "✅ Secret contains required keys: clusterId, clusterToken"
+                  exit 0
+                else
+                  echo "❌ ERROR: Secret is missing required keys"
+                  exit 1
+                fi
+              fi
+              
+              echo "   Waiting... (${elapsed}s / ${timeout}s)"
+              sleep $interval
+              elapsed=$((elapsed + interval))
             done
-            echo "✓ Credentials ready"
+            
+            echo "❌ ERROR: Timeout waiting for credentials secret"
+            echo ""
+            echo "Troubleshooting:"
+            echo "  1. Check pre-install hook job:"
+            echo "     kubectl logs -n {{ include "consonant-relayer.namespace" . }} job/{{ include "consonant-relayer.fullname" . }}-register"
+            echo ""
+            echo "  2. Check if secret exists:"
+            echo "     kubectl get secret -n {{ include "consonant-relayer.namespace" . }}"
+            echo ""
+            echo "  3. Verify RBAC permissions:"
+            echo "     kubectl auth can-i get secrets -n {{ include "consonant-relayer.namespace" . }} --as=system:serviceaccount:{{ include "consonant-relayer.namespace" . }}:{{ include "consonant-relayer.serviceAccountName" . }}"
+            exit 1
+        
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -151,109 +152,207 @@ spec:
           readOnlyRootFilesystem: true
           runAsNonRoot: true
           runAsUser: 65534
+          seccompProfile:
+            type: RuntimeDefault
+        
         resources:
           requests:
-            cpu: 10m
-            memory: 16Mi
-          limits:
             cpu: 50m
-            memory: 32Mi
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        
+        volumeMounts:
+          - name: tmp
+            mountPath: /tmp
       
       {{- if .Values.cloudflare.enabled }}
-      # Wait for cloudflared sidecar to be ready
-      # Ensures tunnel is established before relayer tries to connect
+      {{/* Wait for cloudflared tunnel (FIXED) */}}
       - name: wait-for-tunnel
-        image: busybox:latest
-        imagePullPolicy: IfNotPresent
+        image: {{ include "consonant-relayer.kubectlImage" . }}
+        imagePullPolicy: {{ .Values.hooks.registration.kubectlImage.pullPolicy }}
         command:
           - sh
           - -c
           - |
-            echo "Waiting for Cloudflare tunnel..."
-            max_wait=60
-            wait_time=0
-            until nc -z localhost 8080 2>/dev/null; do
-              if [ $wait_time -ge $max_wait ]; then
-                echo "ERROR: Tunnel did not start within ${max_wait}s"
-                exit 1
+            set -e
+            echo "⏳ Waiting for Cloudflare tunnel to be ready..."
+            
+            # ✅ FIXED: Proper netcat availability check
+            # Install netcat-openbsd (has -z flag)
+            if ! command -v nc &>/dev/null; then
+              echo "📦 Installing netcat..."
+              apk add --no-cache netcat-openbsd 2>/dev/null || {
+                echo "⚠️  Could not install netcat, using curl instead"
+                use_curl=true
+              }
+            fi
+            
+            timeout=120  # 2 minutes
+            elapsed=0
+            interval=2
+            
+            while [ $elapsed -lt $timeout ]; do
+              if [ "${use_curl:-false}" = "true" ]; then
+                # Use curl if netcat not available
+                if curl -s --max-time 2 http://localhost:8080 &>/dev/null; then
+                  echo "✅ Tunnel is ready!"
+                  exit 0
+                fi
+              else
+                # Use netcat
+                if nc -z localhost 8080 2>/dev/null; then
+                  echo "✅ Tunnel is ready!"
+                  exit 0
+                fi
               fi
-              echo "Tunnel not ready, waiting..."
-              sleep 2
-              wait_time=$((wait_time + 2))
+              
+              echo "   Waiting... (${elapsed}s / ${timeout}s)"
+              sleep $interval
+              elapsed=$((elapsed + interval))
             done
-            echo "✓ Tunnel is ready"
+            
+            echo "❌ ERROR: Cloudflare tunnel did not start within ${timeout}s"
+            echo ""
+            echo "Troubleshooting:"
+            echo "  1. Check cloudflared sidecar logs:"
+            echo "     kubectl logs -n {{ include "consonant-relayer.namespace" . }} POD_NAME -c cloudflared"
+            echo ""
+            echo "  2. Verify tunnel token is correct"
+            echo ""
+            echo "  3. Check Cloudflare tunnel status:"
+            echo "     https://one.dash.cloudflare.com/ → Access → Tunnels"
+            exit 1
+        
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
             drop:
               - ALL
-          readOnlyRootFilesystem: true
+          readOnlyRootFilesystem: false  # Need to install packages
           runAsNonRoot: true
           runAsUser: 65534
+          seccompProfile:
+            type: RuntimeDefault
+        
         resources:
           requests:
-            cpu: 10m
-            memory: 16Mi
-          limits:
             cpu: 50m
-            memory: 32Mi
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        
+        volumeMounts:
+          - name: tmp
+            mountPath: /tmp
       {{- end }}
       
       {{/*
       =============================================
-      Main Containers
+      MAIN CONTAINERS
       =============================================
       */}}
       containers:
-      # ===== Relayer Container =====
+      {{/* RELAYER CONTAINER */}}
       - name: relayer
         image: {{ include "consonant-relayer.relayerImage" . }}
-        imagePullPolicy: {{ .Values.relayer.image.pullPolicy }}
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
         
-        # Container security context
+        {{/* Container security context */}}
         securityContext:
           {{- toYaml .Values.relayer.securityContext | nindent 10 }}
         
-        # Environment variables
+        {{/* Environment variables */}}
         env:
-        # ===== Core Configuration =====
+        {{/* Core configuration */}}
         - name: NODE_ENV
           value: "production"
         
         - name: LOG_LEVEL
-          value: {{ .Values.relayer.logLevel | quote }}
+          value: {{ .Values.relayer.logging.level | quote }}
         
-        # ===== Cluster Identity =====
-        # Read from secret created by pre-install hook
+        - name: LOG_FORMAT
+          value: {{ .Values.relayer.logging.format | quote }}
+        
+        {{/* Cluster identity */}}
         - name: CLUSTER_ID
           valueFrom:
             secretKeyRef:
               name: {{ include "consonant-relayer.clusterSecretName" . }}
-              key: clusterId
+              key: {{ .Values.backend.credentials.existingSecretKeys.clusterId }}
         
         - name: CLUSTER_TOKEN
           valueFrom:
             secretKeyRef:
               name: {{ include "consonant-relayer.clusterSecretName" . }}
-              key: clusterToken
+              key: {{ .Values.backend.credentials.existingSecretKeys.clusterToken }}
         
         - name: CLUSTER_NAME
-          valueFrom:
-            secretKeyRef:
-              name: {{ include "consonant-relayer.clusterSecretName" . }}
-              key: clusterName
+          value: {{ .Values.cluster.name | quote }}
+        
+        - name: CLUSTER_NAMESPACE
+          value: {{ include "consonant-relayer.namespace" . | quote }}
+        
+        {{- if .Values.cluster.region }}
+        - name: CLUSTER_REGION
+          value: {{ .Values.cluster.region | quote }}
+        {{- end }}
+        
+        {{- if .Values.cluster.environment }}
+        - name: CLUSTER_ENVIRONMENT
+          value: {{ .Values.cluster.environment | quote }}
+        {{- end }}
+        
+        {{/* Cluster metadata as JSON */}}
+        - name: CLUSTER_METADATA
+          value: {{ include "consonant-relayer.clusterMetadata" . | quote }}
         
         - name: NAMESPACE
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
         
-        # ===== Backend Connection =====
-        # WebSocket URL (ws:// or wss://)
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        
+        {{/* Backend connection */}}
         - name: BACKEND_WS_URL
           value: {{ include "consonant-relayer.backendWsUrl" . | quote }}
         
-        # Socket.io configuration
+        - name: BACKEND_URL
+          value: {{ .Values.backend.url | quote }}
+        
+        - name: CONNECTION_TIMEOUT
+          value: {{ .Values.backend.connectionTimeout | quote }}
+        
+        {{/* Circuit breaker */}}
+        - name: CIRCUIT_BREAKER_ENABLED
+          value: {{ .Values.backend.circuitBreaker.enabled | quote }}
+        
+        - name: CIRCUIT_BREAKER_FAILURE_THRESHOLD
+          value: {{ .Values.backend.circuitBreaker.failureThreshold | quote }}
+        
+        - name: CIRCUIT_BREAKER_SUCCESS_THRESHOLD
+          value: {{ .Values.backend.circuitBreaker.successThreshold | quote }}
+        
+        - name: CIRCUIT_BREAKER_TIMEOUT
+          value: {{ .Values.backend.circuitBreaker.timeout | quote }}
+        
+        {{/* Reconnection strategy */}}
         - name: SOCKET_RECONNECTION
           value: {{ .Values.backend.reconnection.enabled | quote }}
         
@@ -263,10 +362,23 @@ spec:
         - name: SOCKET_RECONNECTION_DELAY_MAX
           value: {{ .Values.backend.reconnection.maxDelay | quote }}
         
-        - name: SOCKET_RECONNECTION_ATTEMPTS
-          value: {{ .Values.backend.reconnection.attempts | quote }}
+        - name: SOCKET_RECONNECTION_MULTIPLIER
+          value: {{ .Values.backend.reconnection.multiplier | quote }}
         
-        # ===== OTEL Configuration =====
+        - name: SOCKET_RECONNECTION_MAX_ATTEMPTS
+          value: {{ .Values.backend.reconnection.maxAttempts | quote }}
+        
+        - name: SOCKET_RECONNECTION_RANDOMIZATION
+          value: {{ .Values.backend.reconnection.randomization | quote }}
+        
+        {{/* Health check */}}
+        - name: HEALTH_CHECK_ENABLED
+          value: {{ .Values.backend.healthCheck.enabled | quote }}
+        
+        - name: HEALTH_CHECK_INTERVAL
+          value: {{ .Values.backend.healthCheck.interval | quote }}
+        
+        {{/* OTEL configuration */}}
         - name: OTEL_PORT
           value: {{ .Values.relayer.otel.port | quote }}
         
@@ -276,25 +388,27 @@ spec:
         - name: OTEL_FLUSH_INTERVAL
           value: {{ .Values.relayer.otel.flushInterval | quote }}
         
-        # ===== Health Check Configuration =====
+        - name: OTEL_MAX_QUEUE_SIZE
+          value: {{ .Values.relayer.otel.maxQueueSize | quote }}
+        
+        - name: OTEL_EXPORT_TIMEOUT
+          value: {{ .Values.relayer.otel.exportTimeout | quote }}
+        
+        {{/* Health endpoint */}}
         - name: HEALTH_PORT
           value: {{ .Values.relayer.health.port | quote }}
         
-        # Container ports
+        {{/* Container ports */}}
         ports:
-        # OTEL collector port (receives from KAgent)
         - name: otel
           containerPort: {{ .Values.relayer.otel.port }}
           protocol: TCP
         
-        # Health check port
         - name: health
           containerPort: {{ .Values.relayer.health.port }}
           protocol: TCP
         
-        # ===== Liveness Probe =====
-        # Checks if container is alive
-        # If fails, K8s restarts the container
+        {{/* Liveness probe */}}
         livenessProbe:
           httpGet:
             path: /liveness
@@ -304,11 +418,9 @@ spec:
           periodSeconds: {{ .Values.relayer.health.liveness.periodSeconds }}
           timeoutSeconds: {{ .Values.relayer.health.liveness.timeoutSeconds }}
           failureThreshold: {{ .Values.relayer.health.liveness.failureThreshold }}
-          successThreshold: 1
+          successThreshold: {{ .Values.relayer.health.liveness.successThreshold }}
         
-        # ===== Readiness Probe =====
-        # Checks if container is ready to receive traffic
-        # If fails, K8s removes pod from service endpoints
+        {{/* Readiness probe */}}
         readinessProbe:
           httpGet:
             path: /readiness
@@ -318,12 +430,9 @@ spec:
           periodSeconds: {{ .Values.relayer.health.readiness.periodSeconds }}
           timeoutSeconds: {{ .Values.relayer.health.readiness.timeoutSeconds }}
           failureThreshold: {{ .Values.relayer.health.readiness.failureThreshold }}
-          successThreshold: 1
+          successThreshold: {{ .Values.relayer.health.readiness.successThreshold }}
         
-        # ===== Startup Probe =====
-        # Checks if container has started successfully
-        # Disables liveness/readiness until this passes
-        # Useful for slow-starting applications
+        {{/* Startup probe */}}
         startupProbe:
           httpGet:
             path: /health
@@ -333,114 +442,128 @@ spec:
           periodSeconds: {{ .Values.relayer.health.startup.periodSeconds }}
           timeoutSeconds: {{ .Values.relayer.health.startup.timeoutSeconds }}
           failureThreshold: {{ .Values.relayer.health.startup.failureThreshold }}
-          successThreshold: 1
+          successThreshold: {{ .Values.relayer.health.startup.successThreshold }}
         
-          # Lifecycle hooks
+        {{/* Lifecycle hooks (FIXED) */}}
         lifecycle:
           postStart:
             exec:
               command:
-              - /bin/sh
-              - -c
-              - |
-                # Wait for backend connection
-                max_wait=30
-                count=0
-                while [ $count -lt $max_wait ]; do
-                  if wget -q -O- http://localhost:${HEALTH_PORT}/readiness 2>/dev/null | grep -q '"connected":true'; then
-                    echo "✓ Connected to backend successfully"
-                    exit 0
-                  fi
-                  echo "Waiting for backend connection... ($count/$max_wait)"
-                  sleep 2
-                  count=$((count + 1))
-                done
-                echo "⚠️  Warning: Backend connection not established within ${max_wait}s"
-                exit 0
-        # Resource requests and limits
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "🚀 Container started, verifying backend connection..."
+                  
+                  timeout={{ .Values.relayer.lifecycle.postStart.timeout }}
+                  elapsed=0
+                  interval=2
+                  
+                  while [ $elapsed -lt $timeout ]; do
+                    if wget -q -O- --timeout=3 http://localhost:${HEALTH_PORT}/readiness 2>/dev/null | grep -q '"connected":true'; then
+                      echo "✅ Backend connected successfully!"
+                      exit 0
+                    fi
+                    
+                    echo "⏳ Waiting for backend connection... (${elapsed}s / ${timeout}s)"
+                    sleep $interval
+                    elapsed=$((elapsed + interval))
+                  done
+                  
+                  echo "❌ ERROR: Backend connection not established within ${timeout}s"
+                  {{- if .Values.relayer.lifecycle.postStart.failOnError }}
+                  exit 1  # ✅ FIXED: Fail pod if connection fails
+                  {{- else }}
+                  exit 0  # Allow pod to start anyway
+                  {{- end }}
+          
+          preStop:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "🛑 Graceful shutdown initiated..."
+                  {{- if .Values.relayer.lifecycle.preStop.waitForRequests }}
+                  echo "⏳ Waiting {{ .Values.relayer.lifecycle.preStop.delay }}s for in-flight requests..."
+                  sleep {{ .Values.relayer.lifecycle.preStop.delay }}
+                  {{- end }}
+                  echo "✅ Shutdown complete"
+        
+        {{/* Resources */}}
         resources:
           {{- toYaml .Values.relayer.resources | nindent 10 }}
         
-        # Volume mounts
+        {{/* Volume mounts */}}
         volumeMounts:
-        # Temporary directory (required for readOnlyRootFilesystem)
         - name: tmp
           mountPath: /tmp
-        
-        # Cache directory for Node.js
         - name: cache
           mountPath: /.npm
+        - name: config
+          mountPath: /etc/consonant
+          readOnly: true
       
       {{- if .Values.cloudflare.enabled }}
-      # ===== Cloudflared Sidecar =====
-      # Runs alongside relayer in same pod
-      # Establishes Cloudflare tunnel
+      {{/* CLOUDFLARED SIDECAR */}}
       - name: cloudflared
         image: {{ include "consonant-relayer.cloudflaredImage" . }}
         imagePullPolicy: {{ .Values.cloudflare.sidecar.image.pullPolicy }}
         
-        # Cloudflared command
         args:
           - tunnel
-          - --no-autoupdate          # Don't auto-update in container
+          - --no-autoupdate
+          - --protocol={{ .Values.cloudflare.sidecar.protocol }}
+          - --loglevel={{ .Values.cloudflare.sidecar.logLevel }}
+          {{- if .Values.cloudflare.sidecar.metrics.enabled }}
+          - --metrics=0.0.0.0:{{ .Values.cloudflare.sidecar.metrics.port }}
+          {{- end }}
           - run
-          - --token
-          - $(TUNNEL_TOKEN)
+          - --token=$(TUNNEL_TOKEN)
           {{- with .Values.cloudflare.sidecar.extraArgs }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
         
         env:
-        # Tunnel token from secret
         - name: TUNNEL_TOKEN
           valueFrom:
             secretKeyRef:
               name: {{ include "consonant-relayer.tunnelSecretName" . }}
               key: token
         
-        # Cloudflared configuration
         - name: TUNNEL_TRANSPORT_PROTOCOL
-          value: "quic"  # QUIC is faster than HTTP/2
+          value: {{ .Values.cloudflare.sidecar.protocol | quote }}
         
         - name: TUNNEL_LOGLEVEL
-          value: "info"
+          value: {{ .Values.cloudflare.sidecar.logLevel | quote }}
         
-        # Metrics port (can be used for monitoring)
+        {{- if .Values.cloudflare.sidecar.metrics.enabled }}
         - name: TUNNEL_METRICS
-          value: "0.0.0.0:2000"
+          value: "0.0.0.0:{{ .Values.cloudflare.sidecar.metrics.port }}"
+        {{- end }}
+        
+        {{- with .Values.cloudflare.sidecar.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
         
         ports:
-        # HTTP proxy port (relayer connects here)
         - name: http
           containerPort: 8080
           protocol: TCP
         
-        # Metrics port
+        {{- if .Values.cloudflare.sidecar.metrics.enabled }}
         - name: metrics
-          containerPort: 2000
+          containerPort: {{ .Values.cloudflare.sidecar.metrics.port }}
           protocol: TCP
+        {{- end }}
         
-        # Readiness probe
+        {{/* Readiness probe */}}
         readinessProbe:
-          httpGet:
-            path: /ready
-            port: metrics
-            scheme: HTTP
-          initialDelaySeconds: 10
-          periodSeconds: 10
-          timeoutSeconds: 3
-          failureThreshold: 3
+          {{- toYaml .Values.cloudflare.sidecar.readinessProbe | nindent 10 }}
         
-        # Liveness probe
+        {{/* Liveness probe */}}
         livenessProbe:
-          httpGet:
-            path: /ready
-            port: metrics
-            scheme: HTTP
-          initialDelaySeconds: 30
-          periodSeconds: 30
-          timeoutSeconds: 5
-          failureThreshold: 3
+          {{- toYaml .Values.cloudflare.sidecar.livenessProbe | nindent 10 }}
         
         resources:
           {{- toYaml .Values.cloudflare.sidecar.resources | nindent 10 }}
@@ -452,51 +575,51 @@ spec:
               - ALL
           readOnlyRootFilesystem: true
           runAsNonRoot: true
-          runAsUser: 65532  # nonroot user in cloudflared image
+          runAsUser: 65532
+          seccompProfile:
+            type: RuntimeDefault
       {{- end }}
       
       {{/*
       =============================================
-      Volumes
+      VOLUMES
       =============================================
       */}}
       volumes:
-      # Temporary directory (emptyDir = ephemeral)
       - name: tmp
-        emptyDir: {}
+        emptyDir:
+          sizeLimit: 100Mi
       
-      # Cache directory for Node.js
       - name: cache
-        emptyDir: {}
+        emptyDir:
+          sizeLimit: 500Mi
+      
+      - name: config
+        configMap:
+          name: {{ include "consonant-relayer.fullname" . }}-config
+          defaultMode: 0444
       
       {{/*
       =============================================
-      Pod Scheduling
+      POD SCHEDULING
       =============================================
       */}}
-      # Node selector (schedule pods on specific nodes)
       {{- with .Values.relayer.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       
-      # Tolerations (allow scheduling on tainted nodes)
       {{- with .Values.relayer.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       
-      # Affinity rules (prefer/require certain node characteristics)
       {{- with .Values.relayer.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       
-      # DNS policy
-      dnsPolicy: ClusterFirst
-      
-      # Restart policy
-      restartPolicy: Always
-      
-      # Termination grace period (time to gracefully shut down)
-      terminationGracePeriodSeconds: 30
+      {{- with .Values.relayer.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

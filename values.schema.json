@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Consonant Relayer Configuration",
+  "description": "Schema for validating Consonant Relayer Helm chart values",
+  "type": "object",
+  "required": [
+    "cluster",
+    "backend",
+    "cloudflare",
+    "llm"
+  ],
+  "properties": {
+    "cluster": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "minLength": 3,
+          "maxLength": 63,
+          "description": "DNS-1123 compliant cluster name"
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "maxLength": 63
+        },
+        "region": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "environment": {
+          "type": "string",
+          "enum": ["production", "staging", "development", "testing", ""]
+        }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https?://[a-zA-Z0-9.-]+(:[0-9]+)?(/.*)?$",
+          "description": "Valid HTTP/HTTPS URL"
+        },
+        "socketPath": {
+          "type": "string",
+          "pattern": "^/.*"
+        },
+        "connectionTimeout": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 300
+        },
+        "reconnection": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "delay": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 60000
+            },
+            "maxDelay": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 300000
+            },
+            "multiplier": {
+              "type": "number",
+              "minimum": 1.0,
+              "maximum": 10.0
+            }
+          }
+        }
+      }
+    },
+    "cloudflare": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "sidecar": {
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "object",
+              "properties": {
+                "repository": {"type": "string"},
+                "tag": {"type": "string"},
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              }
+            }
+          }
+        }
+      },
+      "if": {
+        "properties": {"enabled": {"const": true}}
+      },
+      "then": {
+        "oneOf": [
+          {
+            "required": ["tunnelToken"],
+            "properties": {
+              "tunnelToken": {
+                "type": "string",
+                "pattern": "^eyJ[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+$",
+                "minLength": 100
+              }
+            }
+          },
+          {
+            "properties": {
+              "secrets": {
+                "properties": {
+                  "external": {
+                    "properties": {
+                      "enabled": {"const": true}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "llm": {
+      "type": "object",
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["openai", "anthropic", "gemini", "azureopenai", "ollama"]
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "if": {
+        "properties": {
+          "secrets": {
+            "properties": {
+              "mode": {"const": "kubernetes"}
+            }
+          }
+        }
+      },
+      "then": {
+        "required": ["apiKey"],
+        "properties": {
+          "apiKey": {
+            "type": "string",
+            "minLength": 20
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["external", "kubernetes"]
+        },
+        "external": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "secretStore": {
+              "type": "object",
+              "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "kind": {
+                  "type": "string",
+                  "enum": ["SecretStore", "ClusterSecretStore"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "relayer": {
+      "type": "object",
+      "properties": {
+        "replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": {
+              "type": "object",
+              "properties": {
+                "cpu": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(m|[0-9]*\\.?[0-9]+)?$"
+                },
+                "memory": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(Mi|Gi|M|G)?$"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

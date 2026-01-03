@@ -1,85 +1,94 @@
 {{/*
 Service - Internal Networking
 ==============================
-Creates a ClusterIP service for the relayer
-Exposes two ports:
-1. OTEL port (4317) - KAgent sends traces here
-2. Health port (8080) - K8s health checks
-
-SERVICE TYPE: ClusterIP
-- Internal only, not exposed outside cluster
-- KAgent can reach via DNS: <service-name>.<namespace>.svc.cluster.local:4317
-- Example: my-release-consonant-relayer.consonant-system.svc.cluster.local:4317
-
-WHY NOT LoadBalancer/NodePort?
-- OTEL endpoint is internal infrastructure
-- Only KAgent (in same namespace) needs to reach it
-- Backend reaches relayer via Cloudflare tunnel (WebSocket)
-- No need for external access
-
-DNS RESOLUTION:
-- Short form (same namespace): my-release-consonant-relayer:4317
-- Full form: my-release-consonant-relayer.consonant-system.svc.cluster.local:4317
-- KAgent uses the short form in its OTEL config
+Exposes relayer pods within the cluster
+Type: ClusterIP (internal only)
 */}}
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "consonant-relayer.fullname" . }}
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "consonant-relayer.namespace" . }}
   labels:
     {{- include "consonant-relayer.labels" . | nindent 4 }}
     app.kubernetes.io/component: relayer
+    {{- with .Values.service.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
   {{- with .Values.service.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  # Service type
-  # ClusterIP = internal only
-  # LoadBalancer = creates cloud load balancer (not needed)
-  # NodePort = exposes on node IP (not needed)
   type: {{ .Values.service.type }}
   
-  # Selector matches pods with these labels
-  # Traffic is distributed across all matching pods
+  {{- if .Values.service.clusterIP }}
+  clusterIP: {{ .Values.service.clusterIP }}
+  {{- end }}
+  
+  {{- if .Values.service.externalIPs }}
+  externalIPs:
+    {{- toYaml .Values.service.externalIPs | nindent 4 }}
+  {{- end }}
+  
+  {{- if and (eq .Values.service.type "LoadBalancer") .Values.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.service.loadBalancerIP }}
+  {{- end }}
+  
+  {{- if and (eq .Values.service.type "LoadBalancer") .Values.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml .Values.service.loadBalancerSourceRanges | nindent 4 }}
+  {{- end }}
+  
+  {{- if .Values.service.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- end }}
+  
+  sessionAffinity: {{ .Values.service.sessionAffinity }}
+  {{- with .Values.service.sessionAffinityConfig }}
+  sessionAffinityConfig:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  
+  ipFamilyPolicy: {{ .Values.service.ipFamilyPolicy }}
+  {{- with .Values.service.ipFamilies }}
+  ipFamilies:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  
+  # Pod selector
   selector:
     {{- include "consonant-relayer.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: relayer
   
-  # Ports exposed by this service
+  # Ports
   ports:
-  # ===== OTEL Port =====
-  # KAgent sends traces and logs here
-  # Protocol: gRPC over HTTP/2
+  # OTEL port (gRPC)
   - name: otel
-    port: {{ .Values.service.otelPort }}         # Service port (what clients connect to)
-    targetPort: otel                             # Pod port name (from deployment)
-    protocol: TCP
-    {{- if and (eq .Values.service.type "NodePort") .Values.service.otelNodePort }}
-    nodePort: {{ .Values.service.otelNodePort }}
+    port: {{ .Values.service.otel.port }}
+    targetPort: {{ .Values.service.otel.targetPort }}
+    protocol: {{ .Values.service.otel.protocol }}
+    {{- if and (eq .Values.service.type "NodePort") .Values.service.otel.nodePort }}
+    nodePort: {{ .Values.service.otel.nodePort }}
     {{- end }}
   
-  # ===== Health Port =====
-  # K8s probes use this for health checks
-  # Also can be used for metrics/debugging
+  # Health port (HTTP)
   - name: health
-    port: {{ .Values.service.healthPort }}
-    targetPort: health
-    protocol: TCP
-    {{- if and (eq .Values.service.type "NodePort") .Values.service.healthNodePort }}
-    nodePort: {{ .Values.service.healthNodePort }}
+    port: {{ .Values.service.health.port }}
+    targetPort: {{ .Values.service.health.targetPort }}
+    protocol: {{ .Values.service.health.protocol }}
+    {{- if and (eq .Values.service.type "NodePort") .Values.service.health.nodePort }}
+    nodePort: {{ .Values.service.health.nodePort }}
     {{- end }}
   
-  # Session affinity
-  # None = random distribution (default)
-  # ClientIP = sticky sessions based on client IP
-  sessionAffinity: None
-  
-  # IP families (IPv4/IPv6)
-  # SingleStack = IPv4 only (default)
-  # DualStack = both IPv4 and IPv6
-  ipFamilyPolicy: SingleStack
-  ipFamilies:
-    - IPv4
+  {{- if .Values.cloudflare.enabled }}
+  {{- if .Values.cloudflare.sidecar.metrics.enabled }}
+  # Cloudflared metrics port
+  - name: cf-metrics
+    port: {{ .Values.cloudflare.sidecar.metrics.port }}
+    targetPort: metrics
+    protocol: TCP
+  {{- end }}
+  {{- end }}

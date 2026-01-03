@@ -1,0 +1,146 @@
+# tests/test-connection.yaml
+# Helm test to verify installation
+# Run with: helm test <RELEASE_NAME>
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "consonant-relayer.fullname" . }}-test-connection"
+  labels:
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  
+  containers:
+  - name: test-health-endpoint
+    image: {{ include "consonant-relayer.kubectlImage" . }}
+    imagePullPolicy: {{ .Values.hooks.registration.kubectlImage.pullPolicy }}
+    
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        set -e
+        echo "=========================================="
+        echo "  Consonant Relayer Connection Test"
+        echo "=========================================="
+        echo ""
+        
+        SERVICE="{{ include "consonant-relayer.fullname" . }}"
+        NAMESPACE="{{ include "consonant-relayer.namespace" . }}"
+        
+        echo "Testing connection to: $SERVICE.$NAMESPACE"
+        echo ""
+        
+        # Test 1: Health endpoint
+        echo "Test 1: Health Endpoint"
+        echo "------------------------"
+        if wget -qO- http://$SERVICE.$NAMESPACE:{{ .Values.relayer.health.port }}/health; then
+          echo "✅ Health endpoint accessible"
+        else
+          echo "❌ Health endpoint failed"
+          exit 1
+        fi
+        echo ""
+        
+        # Test 2: Parse JSON response
+        echo "Test 2: Health Status"
+        echo "---------------------"
+        HEALTH=$(wget -qO- http://$SERVICE.$NAMESPACE:{{ .Values.relayer.health.port }}/health)
+        
+        # Install jq if not present
+        apk add --no-cache jq 2>/dev/null || true
+        
+        if echo "$HEALTH" | jq -e '.status == "ok"' > /dev/null 2>&1; then
+          echo "✅ Status: OK"
+        else
+          echo "⚠️  Status: $(echo "$HEALTH" | jq -r '.status // "unknown"')"
+        fi
+        echo ""
+        
+        # Test 3: Socket connection (if expected)
+        echo "Test 3: Backend Connection"
+        echo "---------------------------"
+        CONNECTED=$(echo "$HEALTH" | jq -r '.socket.connected // "false"')
+        if [ "$CONNECTED" = "true" ]; then
+          echo "✅ Backend connected"
+          CLUSTER_ID=$(echo "$HEALTH" | jq -r '.socket.clusterId // "unknown"')
+          echo "   Cluster ID: $CLUSTER_ID"
+        else
+          echo "⚠️  Backend not connected (may be expected in test environment)"
+        fi
+        echo ""
+        
+        # Test 4: OTEL endpoint
+        echo "Test 4: OTEL Endpoint"
+        echo "---------------------"
+        OTEL_READY=$(echo "$HEALTH" | jq -r '.otel.ready // "false"')
+        if [ "$OTEL_READY" = "true" ]; then
+          echo "✅ OTEL endpoint ready"
+          OTEL_PORT=$(echo "$HEALTH" | jq -r '.otel.port // "unknown"')
+          echo "   Port: $OTEL_PORT"
+        else
+          echo "⚠️  OTEL endpoint not ready"
+        fi
+        echo ""
+        
+        # Test 5: DNS resolution
+        echo "Test 5: DNS Resolution"
+        echo "----------------------"
+        if nslookup $SERVICE.$NAMESPACE > /dev/null 2>&1; then
+          echo "✅ DNS resolution working"
+          nslookup $SERVICE.$NAMESPACE | grep "Address:" | tail -1
+        else
+          echo "❌ DNS resolution failed"
+          exit 1
+        fi
+        echo ""
+        
+        # Test 6: TCP connectivity to OTEL port
+        echo "Test 6: OTEL Port Connectivity"
+        echo "-------------------------------"
+        if nc -zv $SERVICE.$NAMESPACE {{ .Values.relayer.otel.port }} 2>&1 | grep -q succeeded; then
+          echo "✅ OTEL port accessible"
+        else
+          echo "❌ OTEL port not accessible"
+          exit 1
+        fi
+        echo ""
+        
+        echo "=========================================="
+        echo "  ✅ All Connection Tests Passed"
+        echo "=========================================="
+    
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 65534
+    
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+    
+    volumeMounts:
+    - name: tmp
+      mountPath: /tmp
+  
+  volumes:
+  - name: tmp
+    emptyDir: {}

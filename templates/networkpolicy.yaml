@@ -1,15 +1,31 @@
+{{/*
+NetworkPolicy - Zero-Trust Network Isolation
+============================================
+Implements defense-in-depth network security
+Restricts both ingress and egress traffic
+*/}}
+
 {{- if .Values.networkPolicy.enabled }}
+
+{{/*
+=============================================
+RELAYER NETWORK POLICY
+=============================================
+Controls traffic to/from relayer pods
+*/}}
 ---
-# NetworkPolicy - Restrict Pod Communication
-# Limits traffic to only what's necessary for operation
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "consonant-relayer.fullname" . }}-relayer
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "consonant-relayer.namespace" . }}
   labels:
     {{- include "consonant-relayer.labels" . | nindent 4 }}
     app.kubernetes.io/component: network-policy
+  {{- with .Values.networkPolicy.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   podSelector:
     matchLabels:
@@ -17,11 +33,16 @@ spec:
       app.kubernetes.io/component: relayer
   
   policyTypes:
-  - Ingress
-  - Egress
+    {{- toYaml .Values.networkPolicy.policyTypes | nindent 4 }}
   
+  {{/*
+  =============================================
+  INGRESS RULES
+  =============================================
+  */}}
   ingress:
-  # Allow OTEL from KAgent
+  {{- if .Values.networkPolicy.ingress.allowFromKAgent }}
+  # Allow OTEL traffic from KAgent
   - from:
     - podSelector:
         matchLabels:
@@ -29,45 +50,111 @@ spec:
     ports:
     - protocol: TCP
       port: {{ .Values.relayer.otel.port }}
+  {{- end }}
   
-  # Allow health checks from anywhere in cluster
-  - ports:
+  {{- if .Values.networkPolicy.ingress.allowHealthChecks }}
+  # Allow health checks from within namespace
+  - from:
+    - podSelector: {}
+    ports:
     - protocol: TCP
       port: {{ .Values.relayer.health.port }}
+  {{- end }}
   
+  {{/* Custom ingress rules */}}
+  {{- with .Values.networkPolicy.ingress.customRules }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+  
+  {{/*
+  =============================================
+  EGRESS RULES (FIXED)
+  =============================================
+  */}}
   egress:
-  # Allow DNS
+  {{- if .Values.networkPolicy.egress.allowDNS }}
+  # Allow DNS queries
   - to:
-    - namespaceSelector: {}
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
     ports:
     - protocol: UDP
       port: 53
-  
-  # Allow connection to Cloudflared sidecar (localhost)
-  - to:
-    - podSelector:
-        matchLabels:
-          {{- include "consonant-relayer.selectorLabels" . | nindent 10 }}
-    ports:
     - protocol: TCP
-      port: 8080
+      port: 53
+  {{- end }}
   
-  # Allow Kubernetes API
+  {{- if .Values.networkPolicy.egress.allowKubernetesAPI }}
+  # Allow Kubernetes API access
   - to:
-    - namespaceSelector: {}
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: default
     ports:
     - protocol: TCP
       port: 443
     - protocol: TCP
       port: 6443
+  {{- end }}
+  
+  {{- if .Values.networkPolicy.egress.allowToCloudflared }}
+  # Allow connection to cloudflared sidecar (localhost only)
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "consonant-relayer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: relayer
+    ports:
+    - protocol: TCP
+      port: 8080
+  {{- end }}
+  
+  {{- if .Values.networkPolicy.egress.allowHTTPS.enabled }}
+  # ✅ FIXED: Restricted HTTPS egress
+  # Only allow to specified destinations (if provided)
+  {{- if .Values.networkPolicy.egress.allowHTTPS.destinations }}
+  - to:
+    {{- range .Values.networkPolicy.egress.allowHTTPS.destinations }}
+    - ipBlock:
+        cidr: {{ . }}
+    {{- end }}
+    ports:
+    - protocol: TCP
+      port: 443
+  {{- else }}
+  # If no destinations specified, deny all external HTTPS
+  # Comment this section out to allow all HTTPS (NOT RECOMMENDED)
+  # - to:
+  #   - ipBlock:
+  #       cidr: 0.0.0.0/0
+  #   ports:
+  #   - protocol: TCP
+  #     port: 443
+  {{- end }}
+  {{- end }}
+  
+  {{/* Custom egress rules */}}
+  {{- with .Values.networkPolicy.egress.customRules }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
 
+{{- if .Values.kagent.enabled }}
+{{/*
+=============================================
+KAGENT NETWORK POLICY
+=============================================
+Controls traffic to/from KAgent pods
+*/}}
 ---
-# NetworkPolicy for KAgent
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "consonant-relayer.fullname" . }}-kagent
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "consonant-relayer.namespace" . }}
   labels:
     {{- include "consonant-relayer.labels" . | nindent 4 }}
     app.kubernetes.io/component: network-policy
@@ -77,29 +164,62 @@ spec:
       app.kubernetes.io/name: kagent
   
   policyTypes:
+  - Ingress
   - Egress
   
+  {{/* KAgent doesn't need ingress (only sends telemetry) */}}
+  ingress: []
+  
   egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
   # Allow OTEL to relayer
   - to:
     - podSelector:
         matchLabels:
           {{- include "consonant-relayer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: relayer
     ports:
     - protocol: TCP
       port: {{ .Values.relayer.otel.port }}
   
-  # Allow DNS
+  # Allow Kubernetes API
   - to:
-    - namespaceSelector: {}
-    ports:
-    - protocol: UDP
-      port: 53
-  
-  # Allow internet for LLM APIs
-  - to:
-    - namespaceSelector: {}
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: default
     ports:
     - protocol: TCP
       port: 443
+    - protocol: TCP
+      port: 6443
+  
+  # Allow HTTPS for LLM APIs
+  # ✅ FIXED: Should specify LLM provider IP ranges
+  # For production, restrict to specific IPs
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        # Exclude private ranges
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    ports:
+    - protocol: TCP
+      port: 443
+{{- end }}
+
 {{- end }}

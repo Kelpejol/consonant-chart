@@ -1,160 +1,531 @@
-# Consonant Installation Guide (Simplified)
+# Consonant Relayer Installation Guide
 
-## Overview
+Complete step-by-step guide for installing Consonant Relayer in production.
 
-This guide shows you how to install Consonant with **minimal setup** - no manual tunnel configuration needed!
+## 📋 Table of Contents
 
-## Prerequisites
+- [Overview](#overview)
+- [Prerequisites](#prerequisites)
+- [Installation Methods](#installation-methods)
+- [Production Installation](#production-installation)
+- [Development Installation](#development-installation)
+- [Post-Installation](#post-installation)
+- [Validation](#validation)
+- [Next Steps](#next-steps)
 
-### ✅ What You Need
+## 🎯 Overview
 
-1. **Backend Server** (your self-hosted Consonant backend)
-   - Running and accessible on localhost (e.g., `http://localhost:3000`)
-   - Can be anywhere: VPS, home server, laptop, etc.
+This guide covers:
+- ✅ Prerequisites and preparation
+- ✅ External secrets setup (recommended)
+- ✅ Cloudflare tunnel configuration
+- ✅ Production-grade installation
+- ✅ Validation and testing
+- ✅ Troubleshooting
 
-2. **Kubernetes Cluster**
-   - Any K8s cluster with `kubectl` and Helm 3.8+
+**Estimated time:** 30-45 minutes
 
-3. **Cloudflare Account** (free tier works)
-   - Domain added to Cloudflare
-   - Zero Trust enabled
+## 📦 Prerequisites
 
-4. **LLM API Key** (OpenAI, Anthropic, or Gemini)
+### 1. Kubernetes Cluster
 
----
+**Minimum requirements:**
+- Kubernetes ≥ 1.24.0
+- 3+ worker nodes (for HA)
+- 2 CPU cores available
+- 2 GB RAM available
 
-## Part 1: Backend Setup (Quick)
-
+**Verify cluster:**
 ```bash
-# Clone and install backend
-git clone https://github.com/yourorg/consonant-backend
-cd consonant-backend
-npm install
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your database/redis settings
-
-# Run migrations
-npx prisma migrate deploy
-
-# Start backend
-npm start
-# Backend now running on http://localhost:3000
+kubectl version --short
+kubectl get nodes
+kubectl cluster-info
 ```
 
----
+### 2. Helm
 
-## Part 2: Cloudflare Tunnel (2 Steps!)
+**Install Helm 3:**
+```bash
+# macOS
+brew install helm
 
-### Step 1: Create Tunnel in Cloudflare Dashboard
+# Linux
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
-1. Go to [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/)
+# Verify
+helm version
+```
+
+### 3. Backend Server
+
+**Requirements:**
+- Consonant backend running
+- Accessible URL (with TLS)
+- PostgreSQL database
+- Redis cache
+
+**Verify backend:**
+```bash
+curl https://your-backend.com/health
+# Expected: {"status":"ok"}
+```
+
+### 4. Cloudflare Account
+
+**Setup:**
+1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com)
+2. Add your domain
+3. Enable Zero Trust (free tier works)
+
+### 5. LLM API Key
+
+**Supported providers:**
+- Anthropic (recommended for production)
+- OpenAI
+- Google Gemini
+- Azure OpenAI
+- Ollama (self-hosted)
+
+**Get API key:**
+- Anthropic: https://console.anthropic.com/settings/keys
+- OpenAI: https://platform.openai.com/api-keys
+- Gemini: https://makersuite.google.com/app/apikey
+
+## 🚀 Installation Methods
+
+### Method 1: Production (External Secrets)
+
+**Best for:** Production environments
+
+**Features:**
+- ✅ Secrets stored in Vault/AWS/Azure/GCP
+- ✅ Automatic secret rotation
+- ✅ Audit logging
+- ✅ Compliance-ready
+
+**Requirements:**
+- External Secrets Operator installed
+- SecretStore configured
+
+### Method 2: Standard (Kubernetes Secrets)
+
+**Best for:** Development, staging
+
+**Features:**
+- ✅ Simple setup
+- ✅ No external dependencies
+- ⚠️ Secrets in etcd (base64 encoded)
+
+**Requirements:**
+- etcd encryption enabled (recommended)
+
+### Method 3: GitOps (ArgoCD/Flux)
+
+**Best for:** Teams using GitOps
+
+**Features:**
+- ✅ Declarative configuration
+- ✅ Version control
+- ✅ Automated deployments
+
+**Requirements:**
+- ArgoCD or Flux installed
+
+## 🏭 Production Installation
+
+### Step 1: Install External Secrets Operator
+```bash
+# Add Helm repository
+helm repo add external-secrets https://charts.external-secrets.io
+helm repo update
+
+# Install operator
+helm install external-secrets \
+  external-secrets/external-secrets \
+  --namespace external-secrets-system \
+  --create-namespace \
+  --set installCRDs=true
+```
+
+### Step 2: Configure Secret Backend
+
+**For HashiCorp Vault:**
+```yaml
+# vault-secretstore.yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: vault-prod
+spec:
+  provider:
+    vault:
+      server: "https://vault.company.com"
+      path: "secret"
+      version: "v2"
+      auth:
+        kubernetes:
+          mountPath: "kubernetes"
+          role: "external-secrets"
+```
+
+Apply:
+```bash
+kubectl apply -f vault-secretstore.yaml
+```
+
+**For AWS Secrets Manager:**
+```yaml
+# aws-secretstore.yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: aws-secrets-manager
+spec:
+  provider:
+    aws:
+      service: SecretsManager
+      region: us-east-1
+      auth:
+        jwt:
+          serviceAccountRef:
+            name: external-secrets-sa
+            namespace: external-secrets-system
+```
+
+### Step 3: Store Secrets in Backend
+
+**Vault:**
+```bash
+# Store LLM API key
+vault kv put secret/consonant/llm-key \
+  apiKey="sk-ant-..."
+
+# Store Cloudflare tunnel token
+vault kv put secret/consonant/tunnel-token \
+  token="eyJh..."
+```
+
+**AWS Secrets Manager:**
+```bash
+# Store LLM API key
+aws secretsmanager create-secret \
+  --name consonant/llm-key \
+  --secret-string '{"apiKey":"sk-ant-..."}'
+
+# Store tunnel token
+aws secretsmanager create-secret \
+  --name consonant/tunnel-token \
+  --secret-string '{"token":"eyJh..."}'
+```
+
+### Step 4: Create Cloudflare Tunnel
+
+1. Go to https://one.dash.cloudflare.com
 2. Navigate to **Networks → Tunnels**
 3. Click **Create a tunnel**
-4. Choose **Cloudflared**
-5. Name it: `consonant-backend`
+4. Select **Cloudflared**
+5. Name: `consonant-backend-prod`
 6. Click **Save tunnel**
-7. **Copy the tunnel token** (looks like `eyJhIjoiY...`) - you'll need this!
+7. **Copy the tunnel token** (starts with `eyJ`)
 
-### Step 2: Install Tunnel Connector
+**Configure tunnel route:**
+1. Click **Public Hostname → Add a public hostname**
+2. Settings:
+   - Subdomain: `consonant`
+   - Domain: `yourcompany.com`
+   - Service: `http://localhost:3000`
+3. Click **Save**
 
-Cloudflare shows you a command like:
-
-```bash
-# Copy and run this command on your backend server
-docker run cloudflare/cloudflared:latest tunnel --no-autoupdate run --token eyJhIjoiY...
-```
-
-Or if you prefer running as a system service:
-
-```bash
-# Linux/macOS
-cloudflared service install eyJhIjoiY...
-```
-
-### Step 3: Route Your Domain
-
-Still in the Cloudflare dashboard:
-
-1. Under **Public Hostname**, click **Add a public hostname**
-2. Set:
-   - **Subdomain**: `consonant` (or whatever you want)
-   - **Domain**: `yourcompany.com` (your domain)
-   - **Service**: `http://localhost:3000`
-3. Click **Save hostname**
-
-**Done!** Your backend is now accessible at `https://consonant.yourcompany.com`
-
-Verify:
+**Test tunnel:**
 ```bash
 curl https://consonant.yourcompany.com/health
-# Expected: {"status":"ok",...}
 ```
 
----
+### Step 5: Create Production Values File
+```yaml
+# production-values.yaml
 
-## Part 3: Kubernetes Installation (One Command!)
+###########################################
+# CLUSTER CONFIGURATION
+###########################################
+cluster:
+  name: "production-us-east-1"
+  region: "us-east-1"
+  environment: "production"
+  metadata:
+    provider: "aws"
+    tags:
+      team: "platform"
+      cost-center: "engineering"
 
-Now install everything into your Kubernetes cluster:
+###########################################
+# BACKEND CONFIGURATION
+###########################################
+backend:
+  url: "https://consonant.yourcompany.com"
+  
+  circuitBreaker:
+    enabled: true
+    failureThreshold: 5
+    successThreshold: 2
+    timeout: 60
+  
+  reconnection:
+    enabled: true
+    delay: 1000
+    maxDelay: 30000
+    multiplier: 2
 
+###########################################
+# EXTERNAL SECRETS (RECOMMENDED)
+###########################################
+secrets:
+  mode: "external"
+  external:
+    enabled: true
+    secretStore:
+      name: "vault-prod"  # or aws-secrets-manager
+      kind: "ClusterSecretStore"
+      validate: true
+    
+    refreshInterval: "1h"
+    
+    paths:
+      llmApiKey:
+        key: "secret/data/consonant/llm-key"
+        property: "apiKey"
+      
+      tunnelToken:
+        key: "secret/data/consonant/tunnel-token"
+        property: "token"
+
+###########################################
+# CLOUDFLARE TUNNEL
+###########################################
+cloudflare:
+  enabled: true
+  
+  tokenValidation:
+    enabled: true
+  
+  sidecar:
+    image:
+      repository: cloudflare/cloudflared
+      tag: "2025.1.1"
+      # ✅ Use digest in production
+      digest: "sha256:..."
+    
+    protocol: "quic"
+    
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+###########################################
+# LLM CONFIGURATION
+###########################################
+llm:
+  provider: "anthropic"
+  model: "claude-3-5-sonnet-20241022"
+  
+  fallbackModels:
+    - "claude-3-opus-20240229"
+    - "gpt-4o"
+  
+  rateLimit:
+    enabled: true
+    requestsPerMinute: 60
+    burst: 10
+  
+  retry:
+    maxAttempts: 3
+    initialDelay: 1000
+    maxDelay: 10000
+    multiplier: 2
+
+###########################################
+# HIGH AVAILABILITY
+###########################################
+relayer:
+  replicas: 3
+  
+  image:
+    repository: ghcr.io/consonant/relayer
+    tag: "1.0.0"
+    # ✅ Use digest in production
+    digest: "sha256:..."
+  
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 1Gi
+  
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+              - consonant-relayer
+          topologyKey: kubernetes.io/hostname
+      - weight: 50
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+              - consonant-relayer
+          topologyKey: topology.kubernetes.io/zone
+  
+  topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: consonant-relayer
+
+###########################################
+# SECURITY
+###########################################
+networkPolicy:
+  enabled: true
+  
+  egress:
+    allowHTTPS:
+      enabled: true
+      # Restrict to specific IPs (recommended)
+      destinations:
+        - "52.94.133.131/32"  # Anthropic API
+        - "35.244.112.0/22"   # Google APIs
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+###########################################
+# MONITORING
+###########################################
+serviceMonitor:
+  enabled: true
+  labels:
+    prometheus: kube-prometheus
+  interval: 30s
+
+###########################################
+# KAGENT
+###########################################
+kagent:
+  enabled: true
+  installCRDs: true
+  
+  controller:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 512Mi
+```
+
+### Step 6: Install Chart
 ```bash
-# Set your values
-export CLUSTER_NAME="production-us-east"
-export BACKEND_URL="https://consonant.yourcompany.com"
-export TUNNEL_TOKEN="eyJhIjoiY..."  # Token from Step 2.1
-export LLM_API_KEY="sk-..."  # Your OpenAI/Anthropic/Gemini key
-export LLM_PROVIDER="openai"  # Options: openai, anthropic, gemini
+# Add Helm repository
+helm repo add consonant https://charts.consonant.xyz
+helm repo update
 
-# Install with Helm
-helm install consonant-prod oci://ghcr.io/consonant/charts/consonant-relayer \
-  --version 1.0.0 \
+# Install
+helm install consonant-prod consonant/consonant-relayer \
   --create-namespace \
   --namespace consonant-system \
-  --set cluster.name=${CLUSTER_NAME} \
-  --set backend.url=${BACKEND_URL} \
-  --set cloudflare.tunnelToken=${TUNNEL_TOKEN} \
-  --set llm.provider=${LLM_PROVIDER} \
-  --set llm.apiKey=${LLM_API_KEY}
-```
-
-**That's it!** The chart:
-1. Registers your cluster with the backend
-2. Installs the relayer (with Cloudflare tunnel sidecar)
-3. Installs KAgent (minimal config, no UI)
-4. Connects everything together
-
-### Monitor Installation
-
-```bash
-# Watch pods start
-kubectl get pods -n consonant-system -w
-
-# Check logs
-kubectl logs -n consonant-system -l app.kubernetes.io/name=consonant-relayer -f
+  --values production-values.yaml \
+  --timeout 10m \
+  --wait
 ```
 
 **Expected output:**
 ```
-✅ Cluster registered: cluster_abc123
-✅ Connected to backend: https://consonant.yourcompany.com
-✅ OTEL receiver ready on :4317
-✅ Tunnel established
+NAME: consonant-prod
+LAST DEPLOYED: Fri Jan  3 10:15:30 2025
+NAMESPACE: consonant-system
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+✅ Consonant Relayer installed successfully!
+...
 ```
 
----
-
-## Verify Everything Works
-
+### Step 7: Verify Installation
 ```bash
-# Port-forward to health endpoint
-kubectl port-forward -n consonant-system svc/consonant-prod-consonant-relayer 8080:8080
+# Check all resources
+kubectl get all -n consonant-system
 
-# Check health (in another terminal)
+# Check pods
+kubectl get pods -n consonant-system -w
+
+# Expected:
+# NAME                                  READY   STATUS    RESTARTS   AGE
+# consonant-prod-relayer-abc123-xyz    2/2     Running   0          2m
+# consonant-prod-relayer-abc123-abc    2/2     Running   0          2m
+# consonant-prod-relayer-abc123-def    2/2     Running   0          2m
+# kagent-controller-789xyz-abc          1/1     Running   0          2m
+# kagent-controller-789xyz-def          1/1     Running   0          2m
+```
+
+## 🧪 Validation
+
+### 1. Check Pre-Install Hooks
+```bash
+# Registration hook
+kubectl get job -n consonant-system
+
+# Check logs
+kubectl logs -n consonant-system \
+  job/consonant-prod-consonant-relayer-register
+```
+
+**Expected:**
+```
+============================================
+  Consonant Cluster Registration
+============================================
+✅ Cluster registered successfully!
+Cluster ID: cluster_abc123
+```
+
+### 2. Verify Cluster Credentials
+```bash
+kubectl get secret -n consonant-system \
+  consonant-prod-consonant-relayer-cluster \
+  -o yaml
+```
+
+### 3. Test Backend Connection
+```bash
+# Port-forward
+kubectl port-forward -n consonant-system \
+  svc/consonant-prod-consonant-relayer 8080:8080
+
+# Test health (in another terminal)
 curl http://localhost:8080/health
 ```
 
-**Expected response:**
+**Expected:**
 ```json
 {
   "status": "ok",
@@ -169,156 +540,170 @@ curl http://localhost:8080/health
 }
 ```
 
-### Create a Test Agent
-
+### 4. Create Test Agent
 ```bash
 kubectl apply -f - <<EOF
 apiVersion: kagent.dev/v1alpha2
 kind: Agent
 metadata:
-  name: hello-agent
+  name: test-agent
   namespace: consonant-system
 spec:
   type: Declarative
   declarative:
-    description: "Test agent"
+    description: "Test agent for verification"
     modelRef:
-      name: default-openai
+      name: default-anthropic
 EOF
 ```
 
-Check your Consonant UI - you should see the agent appear in real-time!
-
----
-
-## What Happened Behind the Scenes
-
-### On Your Backend Server:
-- Cloudflare tunnel connector runs
-- Connects to Cloudflare network
-- Exposes your backend at `https://consonant.yourcompany.com`
-
-### In Your Kubernetes Cluster:
-1. **Pre-Install Hook**:
-   - Job runs with cloudflared sidecar
-   - Calls `POST /api/v1/clusters` via tunnel
-   - Gets back `clusterId` and `clusterToken`
-   - Creates Secret with credentials
-
-2. **Main Installation**:
-   - Relayer deployed with cloudflared sidecar
-   - KAgent installed (minimal, no UI)
-   - Service created (OTEL endpoint on :4317)
-
-3. **Runtime**:
-   - Cloudflared establishes tunnel to backend
-   - Relayer connects to `localhost:8080` → cloudflared → tunnel → backend
-   - KAgent sends traces to relayer on `:4317`
-   - Relayer forwards to backend via Socket.io
-   - Backend streams to UI in real-time
-
----
-
-## Configuration Options
-
-### Use Different LLM Provider
-
+**Check agent:**
 ```bash
-# Anthropic
---set llm.provider=anthropic \
---set llm.apiKey=sk-ant-... \
---set llm.model=claude-3-5-sonnet-20241022
-
-# Gemini
---set llm.provider=gemini \
---set llm.apiKey=... \
---set llm.model=gemini-1.5-pro
-
-# Azure OpenAI
---set llm.provider=azureopenai \
---set llm.apiKey=... \
---set llm.azure.endpoint=https://your-endpoint.openai.azure.com \
---set llm.azure.deploymentName=gpt-4
+kubectl get agents -n consonant-system test-agent
 ```
 
-### High Availability
+### 5. Verify in UI
 
+1. Open: https://consonant.yourcompany.com
+2. Navigate to **Clusters**
+3. Find your cluster: `production-us-east-1`
+4. Verify:
+   - ✅ Status: Connected
+   - ✅ Agent count: 1
+   - ✅ Telemetry flowing
+
+## 🔄 Post-Installation
+
+### 1. Configure Monitoring
 ```bash
-# Multiple relayer replicas
---set relayer.replicas=3
+# Verify ServiceMonitor
+kubectl get servicemonitor -n consonant-system
 
-# More resources
---set relayer.resources.requests.cpu=500m \
---set relayer.resources.requests.memory=512Mi
+# Check Prometheus targets
+# Prometheus UI → Status → Targets
+# Look for: consonant-system/consonant-prod-consonant-relayer
 ```
 
-### Skip KAgent (if already installed)
-
-```bash
---set kagent.enabled=false
+### 2. Set Up Alerts
+```yaml
+# consonant-alerts.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: consonant-relayer-alerts
+  namespace: consonant-system
+spec:
+  groups:
+  - name: consonant
+    interval: 30s
+    rules:
+    - alert: RelayerDown
+      expr: up{job="consonant-relayer"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Relayer is down"
 ```
 
----
-
-## Troubleshooting
-
-### Pre-Install Hook Failed
-
+Apply:
 ```bash
-# Check job logs
-kubectl logs -n consonant-system job/consonant-prod-consonant-relayer-register
-
-# Common issue: Backend not accessible
-# Test from cluster
-kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
-  curl -v https://consonant.yourcompany.com/health
+kubectl apply -f consonant-alerts.yaml
 ```
 
-### Relayer Not Connecting
+### 3. Configure Log Aggregation
 
-```bash
-# Check relayer logs
-kubectl logs -n consonant-system -l app.kubernetes.io/name=consonant-relayer -c relayer
+**FluentBit:**
+```yaml
+# fluentbit-config.yaml
+[FILTER]
+    Name parser
+    Match kube.*consonant-system*
+    Key_Name log
+    Parser json
 
-# Check tunnel sidecar
-kubectl logs -n consonant-system -l app.kubernetes.io/name=consonant-relayer -c cloudflared
+[OUTPUT]
+    Name es
+    Match kube.*consonant-system*
+    Host elasticsearch
+    Port 9200
+    Index consonant
 ```
 
-### No Telemetry
-
+### 4. Document Installation
 ```bash
-# Check KAgent logs
-kubectl logs -n consonant-system -l app.kubernetes.io/name=kagent
+# Save configuration
+helm get values consonant-prod -n consonant-system > \
+  consonant-prod-values.yaml
 
-# Verify OTEL endpoint
-kubectl get svc -n consonant-system
-# Should see: consonant-prod-consonant-relayer with port 4317
+# Save manifests
+helm get manifest consonant-prod -n consonant-system > \
+  consonant-prod-manifest.yaml
+
+# Store securely (not in Git!)
 ```
 
----
+## ✅ Next Steps
 
-## Uninstall
+1. **Create Agents**
+   - Use Consonant UI
+   - Deploy via kubectl
+   - Automate with CI/CD
 
+2. **Set Up Backup**
+   - Back up cluster credentials
+   - Export Helm values
+   - Document recovery procedures
+
+3. **Enable Autoscaling**
 ```bash
+   helm upgrade consonant-prod consonant/consonant-relayer \
+     --reuse-values \
+     --set relayer.autoscaling.enabled=true \
+     --set relayer.autoscaling.minReplicas=3 \
+     --set relayer.autoscaling.maxReplicas=10
+```
+
+4. **Review Security**
+   - Run security scan
+   - Review RBAC permissions
+   - Check NetworkPolicy rules
+   - Audit secret access
+
+5. **Performance Tuning**
+   - Monitor resource usage
+   - Adjust replica count
+   - Tune batch sizes
+   - Optimize reconnection strategy
+
+## 🐛 Troubleshooting
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for detailed guide.
+
+**Quick fixes:**
+```bash
+# View all events
+kubectl get events -n consonant-system --sort-by='.lastTimestamp'
+
+# Check resource status
+kubectl describe pod -n consonant-system -l app.kubernetes.io/name=consonant-relayer
+
+# Restart deployment
+kubectl rollout restart deployment -n consonant-system consonant-prod-consonant-relayer
+
+# Delete and reinstall
 helm uninstall consonant-prod -n consonant-system
-kubectl delete namespace consonant-system
+# Fix issue
+helm install consonant-prod consonant/consonant-relayer -f production-values.yaml
 ```
+
+## 📚 Additional Resources
+
+- [Configuration Reference](values.yaml)
+- [Security Guide](SECURITY.md)
+- [Troubleshooting Guide](TROUBLESHOOTING.md)
+- [API Documentation](https://docs.consonant.xyz)
 
 ---
 
-## Summary
-
-**What you built:**
-- ✅ Self-hosted backend with Cloudflare tunnel
-- ✅ Kubernetes relayer with tunnel sidecar
-- ✅ KAgent for AI agents
-- ✅ Real-time telemetry streaming
-
-**Installation commands:**
-1. Start backend: `npm start`
-2. Create tunnel: Cloudflare dashboard
-3. Install to K8s: `helm install consonant-prod ...`
-
-**Total setup time:** ~10 minutes
-
-**No manual configuration files needed!**
+**Need help?** support@consonant.xyz

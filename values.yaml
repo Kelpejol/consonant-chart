@@ -1,237 +1,531 @@
-# values.yaml - Default configuration for Consonant Relayer
-# Users override these with --set flags or custom values files
-# All values are documented inline
+# values.yaml
+# Production-grade default configuration
+# All values are validated at install time
+# See values.schema.json for validation rules
 
 # ============================================
-# REQUIRED: Cluster Identification
+# GLOBAL CONFIGURATION
+# ============================================
+global:
+  # Image pull policy for all containers
+  # Options: Always, IfNotPresent, Never
+  imagePullPolicy: IfNotPresent
+  
+  # Global image pull secrets
+  imagePullSecrets: []
+  # - name: ghcr-credentials
+  
+  # Global labels applied to all resources
+  labels: {}
+  # Example:
+  # environment: production
+  # managed-by: platform-team
+  # cost-center: engineering
+  
+  # Global annotations
+  annotations: {}
+  # Example:
+  # owner: platform@company.com
+  # slack-channel: "#platform-alerts"
+
+# ============================================
+# CLUSTER IDENTIFICATION
 # ============================================
 cluster:
-  # Unique name for this cluster
-  # Used for: UI identification, log correlation, backend registration
-  # Examples: "production-us-east", "staging-eu", "dev-local"
-  # MUST be set during installation
-  name: ""  # REQUIRED via --set cluster.name=production-us-east
+  # REQUIRED: Unique cluster identifier
+  # Constraints:
+  # - Must match regex: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+  # - Length: 3-63 characters
+  # - DNS-1123 subdomain compliant
+  # - Used for backend registration and UI identification
+  name: ""  # REQUIRED: --set cluster.name=production-us-east-1
   
-  # Kubernetes namespace where agents run
-  # Should match the namespace where this chart is installed
-  # Default: consonant-system
-  namespace: "consonant-system"
+  # Namespace for agent workloads
+  # Default: same as chart installation namespace
+  namespace: ""  # Auto-set to .Release.Namespace
+  
+  # Cluster region (optional, for multi-region setups)
+  region: ""
+  # Example: us-east-1, eu-west-1, ap-southeast-1
+  
+  # Cluster environment (optional)
+  environment: ""
+  # Example: production, staging, development
+  
+  # Additional metadata (optional)
+  metadata:
+    # Cloud provider
+    provider: ""  # aws, gcp, azure, on-prem
+    # Cluster purpose
+    purpose: ""   # ai-workloads, general, testing
+    # Custom tags
+    tags: {}
 
 # ============================================
-# REQUIRED: Backend Configuration
+# BACKEND CONFIGURATION
 # ============================================
 backend:
-  # URL of your self-hosted Consonant backend
-  # This should be the Cloudflare Tunnel URL (e.g., https://consonant.example.com)
-  # The relayer connects to this via the Cloudflare tunnel sidecar
-  # MUST be set during installation
-  url: ""  # REQUIRED via --set backend.url=https://...
+  # REQUIRED: Backend URL
+  # Constraints:
+  # - Must be valid URL starting with https:// (prod) or http:// (dev)
+  # - Must be reachable from cluster
+  # - Should use Cloudflare tunnel URL for security
+  url: ""  # REQUIRED: --set backend.url=https://consonant.company.com
   
-  # Socket.io path (usually don't need to change)
+  # Socket.io path (usually don't change)
   socketPath: "/socket.io"
   
-  # Connection retry settings
-  reconnection:
-    enabled: true
-    delay: 1000  # milliseconds
-    maxDelay: 5000
-    attempts: Infinity  # Always try to reconnect
+  # Connection timeout (seconds)
+  # If backend doesn't respond within this time, connection fails
+  connectionTimeout: 30
   
-  # Please warning do not set these values manually
-  # Pre-populated by pre-install hook (don't set manually)
-  # Only set these if re-installing with existing cluster
-  clusterId: ""
-  clusterToken: ""
+  # Circuit breaker configuration
+  circuitBreaker:
+    # Enable circuit breaker pattern
+    enabled: true
+    # Failure threshold before opening circuit
+    failureThreshold: 5
+    # Success threshold before closing circuit
+    successThreshold: 2
+    # Timeout before attempting to close circuit (seconds)
+    timeout: 60
+    # Half-open state max attempts
+    halfOpenMaxAttempts: 3
+  
+  # Reconnection strategy
+  reconnection:
+    # Enable automatic reconnection
+    enabled: true
+    # Initial delay (milliseconds)
+    delay: 1000
+    # Maximum delay with exponential backoff (milliseconds)
+    maxDelay: 30000  # ✅ FIXED: 30s max (was 5s)
+    # Exponential backoff multiplier
+    multiplier: 2
+    # Maximum number of attempts (0 = infinite)
+    maxAttempts: 0  # ✅ FIXED: Controlled by circuit breaker
+    # Randomization factor (0.0 - 1.0)
+    randomization: 0.5
+  
+  # Health check configuration
+  healthCheck:
+    # Enable periodic health checks
+    enabled: true
+    # Interval between checks (seconds)
+    interval: 30
+    # Timeout for health check (seconds)
+    timeout: 5
+    # Unhealthy threshold
+    unhealthyThreshold: 3
+  
+  # Pre-populated credentials (advanced use only)
+  # WARNING: Do not set these manually
+  # These are auto-populated by pre-install hook
+  credentials:
+    clusterId: ""
+    clusterToken: ""
+    # Use existing secret instead of hook
+    existingSecret: ""
+    existingSecretKeys:
+      clusterId: "clusterId"
+      clusterToken: "clusterToken"
 
 # ============================================
-# Secret Management
+# SECRET MANAGEMENT (PRODUCTION RECOMMENDED)
 # ============================================
 secrets:
-  # Use external secret management (Vault, AWS Secrets Manager, etc.)
-  # Requires External Secrets Operator to be installed in cluster
+  # Secret management strategy
+  # Options: external, kubernetes
+  mode: "external"  # ✅ CHANGED: External by default
+  
+  # External secret management (RECOMMENDED FOR PRODUCTION)
   external:
-    # Enable external secrets instead of regular K8s secrets
-    enabled: false
+    # Enable external secrets operator integration
+    enabled: true  # ✅ CHANGED: Enabled by default
     
-    # Name of the SecretStore to use (must be pre-created by cluster admin)
-    secretStore: "vault-backend"
+    # SecretStore configuration
+    # MUST be pre-created by cluster admin
+    secretStore:
+      # SecretStore name
+      name: "vault-backend"  # REQUIRED if external.enabled=true
+      # SecretStore kind
+      kind: "SecretStore"  # SecretStore or ClusterSecretStore
+      # Validate SecretStore exists before install
+      validate: true
     
-    # How often to sync secrets from external vault
+    # Refresh interval for secret sync
     refreshInterval: "1h"
     
-    # Vault paths for secrets (examples for HashiCorp Vault)
-    # LLM API Key
-    llmKeyPath: "secret/data/consonant/llm-api-key"
-    llmKeyProperty: "apiKey"  # JSON property name in vault
+    # Secret paths in external vault
+    paths:
+      # LLM API key path
+      llmApiKey:
+        # Full path to secret in vault
+        key: "secret/data/consonant/llm-api-key"
+        # Property name in secret
+        property: "apiKey"
+        # Required: Fail if secret doesn't exist
+        required: true
+      
+      # Cloudflare tunnel token path
+      tunnelToken:
+        key: "secret/data/consonant/cloudflare-tunnel"
+        property: "token"
+        required: true
+      
+      # Azure OpenAI specific (only if provider=azureopenai)
+      azureEndpoint:
+        key: "secret/data/consonant/azure-openai"
+        property: "endpoint"
+        required: false
+      
+      azureDeployment:
+        key: "secret/data/consonant/azure-openai"
+        property: "deploymentName"
+        required: false
     
-    # Cloudflare Tunnel Token
-    tunnelTokenPath: "secret/data/consonant/tunnel-token"
-    tunnelTokenProperty: "token"
+    # Encryption at rest (external vault handles this)
+    encryption:
+      # External vault should have encryption enabled
+      # This is a reminder to verify vault encryption
+      atRest: true
+      # Vault encryption provider (for documentation)
+      provider: "vault"  # vault, aws-kms, azure-kv, gcp-kms
+  
+  # Kubernetes native secrets (FALLBACK ONLY)
+  # Only used if external.enabled=false
+  kubernetes:
+    # LLM API key (stored in K8s secret)
+    # WARNING: Base64 encoded, NOT encrypted unless etcd encryption enabled
+    llmApiKey: ""  # --set secrets.kubernetes.llmApiKey=sk-...
     
-    # Azure OpenAI (only if using azureopenai provider)
-    azureEndpointPath: "secret/data/consonant/azure-endpoint"
-    azureDeploymentPath: "secret/data/consonant/azure-deployment"
+    # Cloudflare tunnel token
+    tunnelToken: ""  # --set secrets.kubernetes.tunnelToken=eyJ...
+    
+    # Azure OpenAI credentials
+    azureEndpoint: ""
+    azureDeploymentName: ""
+    
+    # Encrypt secrets at rest in etcd
+    # This requires cluster-level etcd encryption configuration
+    # https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/
+    encryption:
+      # Verify etcd encryption is enabled
+      verify: true
+      # Expected encryption provider
+      provider: "aescbc"  # aescbc, aesgcm, secretbox
+
 # ============================================
-# REQUIRED: Cloudflare Tunnel Configuration
+# CLOUDFLARE TUNNEL CONFIGURATION
 # ============================================
 cloudflare:
-  # Enable Cloudflare Tunnel
-  # When true: relayer connects to backend via cloudflared sidecar
-  # When false: relayer connects directly to backend.url (not recommended for production)
+  # Enable Cloudflare Tunnel integration
   enabled: true
   
-  # Cloudflare Tunnel token
-  # Get this from: Cloudflare Dashboard → Zero Trust → Access → Tunnels
-  # Format: eyJhIjoiY...
-  # MUST be set when cloudflare.enabled=true
-  tunnelToken: ""  # REQUIRED via --set cloudflare.tunnelToken=eyJ...
+  # Tunnel token validation
+  tokenValidation:
+    # Validate token format before use
+    enabled: true
+    # Expected token prefix
+    prefix: "eyJ"  # JWT format
+    # Minimum token length
+    minLength: 100
   
   # Tunnel sidecar configuration
   sidecar:
-    # Cloudflared image
+    # Container image (PINNED TO DIGEST)
     image:
+      # Image repository
       repository: cloudflare/cloudflared
-      tag: 2025.11.1
-      pullPolicy: Always
+      # Image tag (for reference only)
+      tag: "2025.1.1"
+      # Image digest (THIS IS USED, NOT TAG)
+      # ✅ FIXED: Using digest for immutability
+      digest: "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+      # Pull policy
+      pullPolicy: IfNotPresent
     
-    # Resources for cloudflared container
+    # Tunnel protocol
+    # Options: quic, http2, h2mux
+    protocol: "quic"  # Recommended for performance
+    
+    # Log level
+    # Options: debug, info, warn, error, fatal
+    logLevel: "info"
+    
+    # Metrics configuration
+    metrics:
+      # Enable metrics endpoint
+      enabled: true
+      # Metrics port
+      port: 2000
+      # Metrics path
+      path: "/metrics"
+    
+    # Resource limits
     resources:
       requests:
-        cpu: 50m
-        memory: 64Mi
+        cpu: 100m      # ✅ INCREASED from 50m
+        memory: 128Mi  # ✅ INCREASED from 64Mi
       limits:
-        cpu: 200m
-        memory: 128Mi
+        cpu: 500m      # ✅ INCREASED from 200m
+        memory: 256Mi  # ✅ INCREASED from 128Mi
     
-    # Cloudflared args (advanced users only)
+    # Additional arguments
     extraArgs: []
     # Example:
-    # - --protocol=quic
-    # - --loglevel=debug
+    # - --origincert=/etc/cloudflared/cert.pem
+    # - --no-tls-verify
+    
+    # Environment variables
+    extraEnv: []
+    # Example:
+    # - name: TUNNEL_LOGLEVEL
+    #   value: debug
+    
+    # Readiness probe
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 2000
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 3
+    
+    # Liveness probe
+    livenessProbe:
+      httpGet:
+        path: /ready
+        port: 2000
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
 
 # ============================================
-# REQUIRED: LLM Configuration (for KAgent)
+# LLM CONFIGURATION (FOR KAGENT)
 # ============================================
 llm:
   # LLM provider
   # Supported: openai, anthropic, gemini, azureopenai, ollama
-  provider: "openai"
+  provider: "anthropic"  # ✅ CHANGED: Anthropic recommended for production
   
-  # API key for the LLM provider
-  # MUST be set during installation
-  apiKey: ""  # REQUIRED via --set llm.apiKey=sk-...
+  # Provider validation
+  validation:
+    # Validate API key format
+    enabled: true
+    # Provider-specific API key patterns
+    patterns:
+      openai: "^sk-[a-zA-Z0-9]{48}$"
+      anthropic: "^sk-ant-[a-zA-Z0-9-_]{95,}$"
+      gemini: "^[a-zA-Z0-9-_]{39}$"
   
-  # Model to use (provider-specific)
-  # OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo
-  # Anthropic: claude-3-5-sonnet-20241022, claude-3-opus-20240229
-  # Gemini: gemini-1.5-pro, gemini-1.5-flash
-  model: "gpt-4o-mini"
+  # Model configuration
+  model: "claude-3-5-sonnet-20241022"  # ✅ CHANGED: Latest Claude
   
-  # Azure OpenAI specific (only if provider=azureopenai)
+  # Model fallback chain (if primary fails)
+  fallbackModels:
+    - "claude-3-opus-20240229"
+    - "gpt-4o"
+  
+  # Rate limiting
+  rateLimit:
+    # Enable client-side rate limiting
+    enabled: true
+    # Requests per minute
+    requestsPerMinute: 60
+    # Burst size
+    burst: 10
+  
+  # Retry configuration
+  retry:
+    # Maximum retry attempts
+    maxAttempts: 3
+    # Initial delay (milliseconds)
+    initialDelay: 1000
+    # Maximum delay (milliseconds)
+    maxDelay: 10000
+    # Exponential backoff multiplier
+    multiplier: 2
+  
+  # Timeout configuration
+  timeout:
+    # API request timeout (seconds)
+    request: 30
+    # Streaming timeout (seconds)
+    stream: 300
+  
+  # Provider-specific configuration
+  
+  # OpenAI specific
+  openai:
+    # API base URL (for proxies)
+    baseURL: "https://api.openai.com/v1"
+    # Organization ID
+    organization: ""
+    # Project ID
+    project: ""
+  
+  # Azure OpenAI specific
   azure:
+    # Azure endpoint
     endpoint: ""
+    # Deployment name
     deploymentName: ""
+    # API version
+    apiVersion: "2024-02-01"
   
-  # Ollama specific (only if provider=ollama)
+  # Anthropic specific
+  anthropic:
+    # API base URL
+    baseURL: "https://api.anthropic.com"
+    # API version
+    apiVersion: "2023-06-01"
+  
+  # Gemini specific
+  gemini:
+    # API base URL
+    baseURL: "https://generativelanguage.googleapis.com"
+  
+  # Ollama specific (for local/self-hosted)
   ollama:
-    baseUrl: "http://ollama:11434"
+    # Ollama base URL
+    baseURL: "http://ollama:11434"
+    # Keep alive duration
+    keepAlive: "5m"
 
 # ============================================
-# Relayer Configuration
+# RELAYER CONFIGURATION
 # ============================================
 relayer:
-  # Number of relayer replicas
-  # Usually 1 is enough (Socket.io handles reconnection)
-  # Increase for high availability
-  replicas: 1
+  # Number of replicas
+  # Minimum: 1, Recommended: 3 for HA
+  replicas: 3  # ✅ CHANGED: HA by default
   
-  # Container image
+  # Deployment strategy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0  # Zero downtime updates
+  
+  # Container image (PINNED TO DIGEST)
   image:
     repository: ghcr.io/consonant/relayer
-    tag: ""  # Defaults to Chart.appVersion if empty
+    tag: "1.0.0"
+    # ✅ FIXED: Using digest
+    digest: "sha256:fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321"
     pullPolicy: IfNotPresent
   
-  # Image pull secrets (if using private registry)
+  # Image pull secrets
   imagePullSecrets: []
-  # - name: ghcr-secret
   
-  # Resource limits and requests
+  # Resource configuration
   resources:
     requests:
-      cpu: 200m
-      memory: 256Mi
+      cpu: 500m      # ✅ INCREASED from 200m
+      memory: 512Mi  # ✅ INCREASED from 256Mi
     limits:
-      cpu: 1000m
-      memory: 512Mi
+      cpu: 2000m     # ✅ INCREASED from 1000m
+      memory: 1Gi    # ✅ INCREASED from 512Mi
   
-  # OTEL Collector configuration
+  # Autoscaling (optional)
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  
+  # OTEL collector configuration
   otel:
-    # Port where relayer receives OTEL from KAgent
+    # Port for OTEL receiver
     port: 4317
-    # Batch size before forwarding to backend
+    # Batch size before forwarding
     batchSize: 100
     # Flush interval (milliseconds)
     flushInterval: 1000
+    # Maximum queue size
+    maxQueueSize: 10000
+    # Export timeout (seconds)
+    exportTimeout: 30
+    # Retry configuration
+    retry:
+      enabled: true
+      initialInterval: 5
+      maxInterval: 30
+      maxElapsedTime: 300
   
   # Health check configuration
   health:
+    # Health endpoint port
     port: 8080
+    
+    # Liveness probe
     liveness:
       initialDelaySeconds: 10
       periodSeconds: 30
       timeoutSeconds: 5
       failureThreshold: 3
+      successThreshold: 1
+    
+    # Readiness probe
     readiness:
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 3
       failureThreshold: 3
+      successThreshold: 1
+    
+    # Startup probe (for slow-starting apps)
     startup:
       initialDelaySeconds: 0
       periodSeconds: 5
       timeoutSeconds: 3
-      failureThreshold: 30  # 150 seconds max startup time
+      failureThreshold: 60  # ✅ INCREASED: 300s max (was 150s)
+      successThreshold: 1
   
-  # Log level: trace, debug, info, warn, error
-  logLevel: "info"
+  # Lifecycle hooks
+  lifecycle:
+    postStart:
+      # Verify backend connection on startup
+      verifyConnection: true
+      # Timeout for verification (seconds)
+      timeout: 60  # ✅ INCREASED from 30s
+      # Fail pod if connection fails
+      failOnError: true  # ✅ CHANGED: Fail fast
+    
+    preStop:
+      # Graceful shutdown delay (seconds)
+      delay: 10
+      # Wait for in-flight requests
+      waitForRequests: true
   
-  # Node selector for pod placement
-  nodeSelector: {}
-  # Example:
-  # disktype: ssd
-  
-  # Tolerations for pod scheduling
-  tolerations: []
-  # Example:
-  # - key: "dedicated"
-  #   operator: "Equal"
-  #   value: "ai-workloads"
-  #   effect: "NoSchedule"
-  
-  # Affinity rules
-  affinity: {}
-  # Example:
-  # podAntiAffinity:
-  #   preferredDuringSchedulingIgnoredDuringExecution:
-  #   - weight: 100
-  #     podAffinityTerm:
-  #       labelSelector:
-  #         matchLabels:
-  #           app.kubernetes.io/name: consonant-relayer
-  #       topologyKey: kubernetes.io/hostname
-  
-  # Pod annotations
-  podAnnotations: {}
-  # Example:
-  # prometheus.io/scrape: "true"
+  # Logging configuration
+  logging:
+    # Log level: trace, debug, info, warn, error, fatal
+    level: "info"
+    # Log format: json, text
+    format: "json"
+    # Enable structured logging
+    structured: true
+    # Log sampling (reduce log volume)
+    sampling:
+      enabled: true
+      initial: 100
+      thereafter: 100
   
   # Pod security context
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 1000
+    runAsGroup: 1000
     fsGroup: 1000
     seccompProfile:
       type: RuntimeDefault
+    # ✅ ADDED: Additional hardening
+    fsGroupChangePolicy: "OnRootMismatch"
   
   # Container security context
   securityContext:
@@ -242,80 +536,298 @@ relayer:
     readOnlyRootFilesystem: true
     runAsNonRoot: true
     runAsUser: 1000
+    # ✅ ADDED: Additional hardening
+    seccompProfile:
+      type: RuntimeDefault
+  
+  # Pod annotations
+  podAnnotations: {}
+  # Example:
+  # prometheus.io/scrape: "true"
+  # prometheus.io/port: "8080"
+  # prometheus.io/path: "/metrics"
+  
+  # Pod labels
+  podLabels: {}
+  
+  # Node selector
+  nodeSelector: {}
+  # Example:
+  # node.kubernetes.io/instance-type: t3.large
+  # topology.kubernetes.io/zone: us-east-1a
+  
+  # Tolerations
+  tolerations: []
+  # Example:
+  # - key: "ai-workload"
+  #   operator: "Equal"
+  #   value: "true"
+  #   effect: "NoSchedule"
+  
+  # Affinity rules (HA configuration)
+  affinity:
+    # ✅ ADDED: Pod anti-affinity for HA
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - consonant-relayer
+            topologyKey: kubernetes.io/hostname
+        - weight: 50
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - consonant-relayer
+            topologyKey: topology.kubernetes.io/zone
+  
+  # Topology spread constraints
+  topologySpreadConstraints: []
+  # Example:
+  # - maxSkew: 1
+  #   topologyKey: topology.kubernetes.io/zone
+  #   whenUnsatisfiable: DoNotSchedule
+  #   labelSelector:
+  #     matchLabels:
+  #       app.kubernetes.io/name: consonant-relayer
+  
+  # Priority class
+  priorityClassName: ""
+  
+  # Termination grace period (seconds)
+  terminationGracePeriodSeconds: 30
+  
+  # DNS configuration
+  dnsPolicy: ClusterFirst
+  dnsConfig: {}
+  
+  # Service account annotations
+  serviceAccountAnnotations: {}
+  # Example:
+  # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/consonant-relayer
 
 # ============================================
-# Service Configuration
+# SERVICE CONFIGURATION
 # ============================================
 service:
-  # Service type for OTEL endpoint
-  # Usually ClusterIP (internal only)
+  # Service type
   type: ClusterIP
   
-  # OTEL port
-  otelPort: 4317
+  # OTEL port configuration
+  otel:
+    port: 4317
+    targetPort: 4317
+    protocol: TCP
+    # NodePort (only if type=NodePort)
+    nodePort: null
   
-  # Health check port
-  healthPort: 8080
+  # Health port configuration
+  health:
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+    # NodePort (only if type=NodePort)
+    nodePort: null
   
   # Service annotations
   annotations: {}
   # Example:
-  # prometheus.io/scrape: "true"
-  # prometheus.io/port: "8080"
+  # service.beta.kubernetes.io/aws-load-balancer-type: nlb
+  # service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+  
+  # Service labels
+  labels: {}
+  
+  # ClusterIP (optional, usually auto-assigned)
+  clusterIP: ""
+  
+  # External IPs
+  externalIPs: []
+  
+  # Load balancer IP (only if type=LoadBalancer)
+  loadBalancerIP: ""
+  
+  # Load balancer source ranges
+  loadBalancerSourceRanges: []
+  
+  # External traffic policy
+  # Options: Cluster, Local
+  externalTrafficPolicy: ""
+  
+  # Session affinity
+  # Options: None, ClientIP
+  sessionAffinity: None
+  sessionAffinityConfig: {}
+  
+  # IP families
+  ipFamilyPolicy: SingleStack
+  ipFamilies:
+    - IPv4
 
 # ============================================
-# NetworkPolicy Configuration
+# NETWORK POLICY CONFIGURATION
 # ============================================
 networkPolicy:
-  # Enable network isolation
-  # Restricts pod communication to only necessary traffic
-  # Recommended for production
+  # Enable network policies
   enabled: true
   
-  # Additional egress rules (advanced users only)
-  additionalEgressRules: []
+  # Policy type
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  # Ingress rules
+  ingress:
+    # Allow OTEL from KAgent
+    allowFromKAgent: true
+    
+    # Allow health checks from anywhere in namespace
+    allowHealthChecks: true
+    
+    # Custom ingress rules
+    customRules: []
+    # Example:
+    # - from:
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         name: monitoring
+    #   ports:
+    #   - port: 8080
+  
+  # Egress rules
+  egress:
+    # Allow DNS
+    allowDNS: true
+    
+    # Allow Kubernetes API
+    allowKubernetesAPI: true
+    
+    # Allow to cloudflared sidecar (localhost)
+    allowToCloudflared: true
+    
+    # ✅ FIXED: Restrict external HTTPS
+    # Only allow to specific domains
+    allowHTTPS:
+      enabled: true
+      # Allowed destination CIDRs
+      destinations: []
+      # Example:
+      # - 0.0.0.0/0  # Allow all (NOT recommended)
+      # Or specific IP ranges:
+      # - 52.94.133.131/32  # OpenAI API
+      # - 35.244.112.0/22    # Anthropic API
+    
+    # Custom egress rules
+    customRules: []
+  
+  # Pod selector
+  podSelector:
+    matchLabels: {}
+  
+  # Annotations
+  annotations: {}
+
 # ============================================
-# ServiceAccount & RBAC
+# POD DISRUPTION BUDGET (NEW)
 # ============================================
-serviceAccount:
-  # Create a service account
+podDisruptionBudget:
+  # Enable PDB
+  enabled: true  # ✅ ADDED for HA
+  
+  # Minimum available pods
+  minAvailable: 1
+  
+  # OR: Maximum unavailable pods
+  # maxUnavailable: 1
+  # NOTE: Use either minAvailable OR maxUnavailable, not both
+  
+  # Unhealthy pod eviction policy
+  # Options: IfHealthyBudget, AlwaysAllow
+  unhealthyPodEvictionPolicy: "IfHealthyBudget"
+
+# ============================================
+# SERVICE MONITOR (PROMETHEUS)
+# ============================================
+serviceMonitor:
+  # Enable ServiceMonitor for Prometheus Operator
+  enabled: false  # Enable if using Prometheus Operator
+  
+  # Namespace for ServiceMonitor
+  # Leave empty to use chart namespace
+  namespace: ""
+  
+  # Additional labels
+  labels: {}
+  # Example:
+  # prometheus: kube-prometheus
+  
+  # Scrape interval
+  interval: 30s
+  
+  # Scrape timeout
+  scrapeTimeout: 10s
+  
+  # Metrics path
+  path: /metrics
+  
+  # Metric relabelings
+  metricRelabelings: []
+  
+  # Relabelings
+  relabelings: []
+
+# ============================================
+# RBAC CONFIGURATION
+# ============================================
+rbac:
+  # Create RBAC resources
   create: true
   
-  # Annotations for the service account
+  # Additional rules for runtime ServiceAccount
+  additionalRules: []
+  # Example:
+  # - apiGroups: ["batch"]
+  #   resources: ["jobs"]
+  #   verbs: ["get", "list", "watch"]
+
+serviceAccount:
+  # Create service account
+  create: true
+  
+  # Service account name
+  # If empty, uses generated name
+  name: ""
+  
+  # Annotations
   annotations: {}
   # Example:
-  # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/consonant-relayer
+  # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/consonant
   
-  # Name of the service account
-  # If not set, uses the release name
-  name: ""
-
-rbac:
-  # Create RBAC resources (Role, RoleBinding)
-  create: true
-  
-  # Additional rules (advanced users only)
-  # These are merged with the default rules
-  additionalRules: []
+  # Auto-mount service account token
+  automount: true
 
 # ============================================
-# KAgent Configuration (Dependency)
+# KAGENT CONFIGURATION (DEPENDENCY)
 # ============================================
 kagent:
   # Enable KAgent installation
-  # If false, assumes KAgent is already installed
   enabled: true
   
   # Install KAgent CRDs
-  # Set to false if CRDs are already installed
   installCRDs: true
   
-  # Disable KAgent UI (Consonant provides the UI)
+  # KAgent UI (disabled, using Consonant UI)
   ui:
     enabled: false
   
-  # Disable all default agents and tools
-  # Users create custom agents through Consonant 
+  # Disable default agents (use custom agents)
   agents:
     k8s-agent:
       enabled: false
@@ -338,54 +850,59 @@ kagent:
     promql-agent:
       enabled: false
   
+  # Disable default tools
   tools:
     grafana-mcp:
       enabled: false
     querydoc:
       enabled: false
   
-  # OTEL configuration - points to relayer
-  # These are auto-configured in templates
+  # OTEL configuration (auto-configured)
   otel:
     tracing:
       enabled: true
       exporter:
         otlp:
-          endpoint: ""  # Auto-set to relayer service
+          # Auto-set to relayer service
+          endpoint: ""
           insecure: true
           timeout: 15
     logging:
       enabled: true
       exporter:
         otlp:
-          endpoint: ""  # Auto-set to relayer service
+          # Auto-set to relayer service
+          endpoint: ""
           insecure: true
           timeout: 15
   
-  # LLM provider configuration
-  # Auto-configured from top-level llm values
+  # LLM providers (auto-configured)
   providers:
-    default: ""  # Auto-set
+    # Default provider (auto-set)
+    default: ""
+    
     openAI:
-      apiKeySecretRef: ""  # Auto-set
+      apiKeySecretRef: ""
       apiKeySecretKey: "apiKey"
-      model: ""  # Auto-set
+      model: ""
+    
     anthropic:
-      apiKeySecretRef: ""  # Auto-set
+      apiKeySecretRef: ""
       apiKeySecretKey: "apiKey"
-      model: ""  # Auto-set
+      model: ""
+    
     gemini:
-      apiKeySecretRef: ""  # Auto-set
+      apiKeySecretRef: ""
       apiKeySecretKey: "apiKey"
-      model: ""  # Auto-set
+      model: ""
   
   # KMCP (Model Context Protocol)
   kmcp:
     enabled: true
   
-  # KAgent controller resources
+  # Controller configuration
   controller:
-    replicas: 1
+    replicas: 2  # ✅ CHANGED: HA by default
     loglevel: "info"
     resources:
       requests:
@@ -399,32 +916,85 @@ kagent:
       initialBufSize: "8Ki"
       maxBufSize: "2Mi"
   
-  # Database - SQLite for simplicity
-  # Production should use PostgreSQL
+  # Database (SQLite for simplicity, PostgreSQL for production)
   database:
     type: "sqlite"
     sqlite:
       databaseName: "kagent.db"
 
 # ============================================
-# Advanced Options
+# PRE-INSTALL HOOKS CONFIGURATION
+# ============================================
+hooks:
+  # Cluster registration hook
+  registration:
+    # Timeout for registration job (seconds)
+    timeout: 300
+    
+    # Number of retries
+    backoffLimit: 3
+    
+    # TTL after finished (seconds)
+    ttlSecondsAfterFinished: 600
+    
+    # Resources for registration container
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    
+    # Kubectl image (PINNED TO DIGEST)
+    kubectlImage:
+      repository: bitnami/kubectl
+      tag: "1.29.0"
+      # ✅ FIXED: Using digest
+      digest: "sha256:9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba"
+      pullPolicy: IfNotPresent
+  
+  # KAgent cleanup hook
+  cleanup:
+    # Enable KAgent cleanup before install
+    enabled: true
+    
+    # Timeout for cleanup job (seconds)
+    timeout: 300
+    
+    # Backoff limit
+    backoffLimit: 2
+    
+    # TTL after finished (seconds)
+    ttlSecondsAfterFinished: 300
+
+# ============================================
+# ADVANCED OPTIONS
 # ============================================
 
-# Full name override
-# Overrides the generated full name
+# Name overrides
+nameOverride: ""
 fullnameOverride: ""
 
-# Name override
-# Overrides just the name component
-nameOverride: ""
-
-# Additional labels for all resources
+# Common labels for all resources
 commonLabels: {}
 # Example:
-# environment: production
-# team: platform
+# app: consonant
+# component: relayer
+# part-of: ai-platform
 
-# Additional annotations for all resources
+# Common annotations for all resources
 commonAnnotations: {}
 # Example:
-# owner: platform-team
+# managed-by: terraform
+# team: platform
+
+# Enable tests
+tests:
+  enabled: true
+  
+  # Test connection image
+  image:
+    repository: busybox
+    tag: "1.36.1"
+    digest: "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"

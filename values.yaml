@@ -716,13 +716,14 @@ networkPolicy:
     # Only allow to specific domains
     allowHTTPS:
       enabled: true
-      # Allowed destination CIDRs
+     # Leave empty to allow all external HTTPS (recommended)
+      # This blocks private IP ranges but allows all internet
       destinations: []
-      # Example:
-      # - 0.0.0.0/0  # Allow all (NOT recommended)
-      # Or specific IP ranges:
-      # - 52.94.133.131/32  # OpenAI API
-      # - 35.244.112.0/22    # Anthropic API
+      
+      # Advanced: Specify custom ranges (not recommended)
+      # Only use if you have specific requirements
+      # - "0.0.0.0/0"  # Explicitly allow all
+      # - "52.94.133.131/32"  # Specific IP (requires maintenance)
     
     # Custom egress rules
     customRules: []

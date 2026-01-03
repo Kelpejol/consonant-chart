@@ -406,10 +406,7 @@ networkPolicy:
   egress:
     allowHTTPS:
       enabled: true
-      # Restrict to specific IPs (recommended)
-      destinations:
-        - "52.94.133.131/32"  # Anthropic API
-        - "35.244.112.0/22"   # Google APIs
+      #     destinations: []  # Empty = allow all external HTTPS
 
 podDisruptionBudget:
   enabled: true

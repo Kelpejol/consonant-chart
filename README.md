@@ -366,14 +366,21 @@ Key sections:
 
 ### Security Features
 
+✅ **Network Isolation**
+- NetworkPolicy enabled by default
+- Ingress control (only KAgent → Relayer)
+- Lateral movement prevention (blocks private IPs)
+- Zero maintenance (wildcard egress to internet)
+
 ✅ **Secrets Management**
 - External secrets support (Vault, AWS, Azure, GCP)
 - Kubernetes secrets with etcd encryption
 - No secrets in Helm values or Git
 
 ✅ **Network Security**
-- NetworkPolicy enforcement (zero-trust)
-- Cloudflare Tunnel (no exposed ports)
+- Pod-level isolation with NetworkPolicy
+- VPC-level security (Security Groups, Firewall Rules)
+- Cloudflare Tunnel (no exposed ports, zero-trust)
 - TLS encryption in transit
 - Private cluster communication
 
@@ -389,6 +396,57 @@ Key sections:
 - Separate hook and runtime accounts
 - Least privilege principle
 - Resource name restrictions
+
+### NetworkPolicy Strategy
+
+**This chart enables NetworkPolicy by default with wildcard egress.**
+
+**What this provides:**
+- ✅ **Ingress control**: Only KAgent pods can send telemetry to Relayer
+- ✅ **Lateral movement prevention**: Blocks access to internal services (10.x.x.x, 192.168.x.x)
+- ✅ **Zero maintenance**: No tracking of external IP ranges
+- ✅ **Scalability**: Works with any LLM provider (Anthropic, OpenAI, Gemini, Azure, etc.)
+
+**Default configuration:**
+```yaml
+networkPolicy:
+  enabled: true
+  egress:
+    allowHTTPS:
+      destinations: []  # Empty = allow all external HTTPS
+```
+
+**What gets blocked:**
+- ❌ Unauthorized pods sending to Relayer
+- ❌ Relayer reaching internal cluster services (databases, etc.)
+- ❌ Relayer reaching private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+
+**What gets allowed:**
+- ✅ KAgent → Relayer (OTEL telemetry)
+- ✅ Relayer → Backend (via Cloudflare Tunnel)
+- ✅ Relayer → LLM APIs (Anthropic, OpenAI, etc.)
+- ✅ DNS resolution
+- ✅ Kubernetes API access
+
+**External threat protection:**
+External threats are mitigated by:
+1. VPC perimeter controls (AWS Security Groups, GCP Firewall Rules)
+2. Authentication (API keys, IAM roles)
+3. Encryption (TLS everywhere)
+4. Cloudflare Tunnel (zero-trust networking)
+
+**When to disable:**
+Disable NetworkPolicy only if:
+- Your Kubernetes distribution doesn't support it (rare)
+- You're using a service mesh (Istio/Linkerd) for network controls
+- You have specific technical constraints
+```yaml
+# To disable:
+networkPolicy:
+  enabled: false
+```
+
+See [SECURITY.md](SECURITY.md#network-policy) for detailed documentation.
 
 ### Security Checklist
 

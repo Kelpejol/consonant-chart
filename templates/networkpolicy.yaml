@@ -1,8 +1,14 @@
 {{/*
-NetworkPolicy - Zero-Trust Network Isolation
+NetworkPolicy - Pod-Level Network Isolation
 ============================================
-Implements defense-in-depth network security
-Restricts both ingress and egress traffic
+ENABLED BY DEFAULT - Provides defense-in-depth security
+
+Strategy:
+- Ingress: Only authorized pods (KAgent) can send traffic
+- Egress: Allow all external HTTPS, block private IPs
+- Zero maintenance: No IP tracking required
+
+This provides security benefits without operational burden.
 */}}
 
 {{- if .Values.networkPolicy.enabled }}
@@ -39,10 +45,11 @@ spec:
   =============================================
   INGRESS RULES
   =============================================
+  Restricts WHO can send traffic to relayer pods
   */}}
   ingress:
   {{- if .Values.networkPolicy.ingress.allowFromKAgent }}
-  # Allow OTEL traffic from KAgent
+  # Allow OTEL traffic from KAgent only
   - from:
     - podSelector:
         matchLabels:
@@ -61,19 +68,20 @@ spec:
       port: {{ .Values.relayer.health.port }}
   {{- end }}
   
-  {{/* Custom ingress rules */}}
   {{- with .Values.networkPolicy.ingress.customRules }}
+  # Custom ingress rules
   {{- toYaml . | nindent 2 }}
   {{- end }}
   
   {{/*
   =============================================
-  EGRESS RULES (FIXED)
+  EGRESS RULES
   =============================================
+  Controls WHERE relayer pods can send traffic
   */}}
   egress:
   {{- if .Values.networkPolicy.egress.allowDNS }}
-  # Allow DNS queries
+  # DNS queries (required)
   - to:
     - namespaceSelector:
         matchLabels:
@@ -89,7 +97,7 @@ spec:
   {{- end }}
   
   {{- if .Values.networkPolicy.egress.allowKubernetesAPI }}
-  # Allow Kubernetes API access
+  # Kubernetes API access (required for pod/node queries)
   - to:
     - namespaceSelector:
         matchLabels:
@@ -101,8 +109,9 @@ spec:
       port: 6443
   {{- end }}
   
+  {{- if .Values.cloudflare.enabled }}
   {{- if .Values.networkPolicy.egress.allowToCloudflared }}
-  # Allow connection to cloudflared sidecar (localhost only)
+  # Cloudflared sidecar communication (localhost)
   - to:
     - podSelector:
         matchLabels:
@@ -112,33 +121,62 @@ spec:
     - protocol: TCP
       port: 8080
   {{- end }}
+  {{- end }}
   
   {{- if .Values.networkPolicy.egress.allowHTTPS.enabled }}
-  # ✅ FIXED: Restricted HTTPS egress
-  # Only allow to specified destinations (if provided)
+  #
+  # HTTPS Egress Strategy
+  # =====================
+  #
+  # Purpose: Allow external API calls (LLM providers, backend) while
+  #          preventing lateral movement attacks
+  #
+  # Approach: Allow all external HTTPS (0.0.0.0/0), block private IPs
+  #
+  # Why this works:
+  # ✅ Zero maintenance (no IP tracking for Anthropic, OpenAI, etc.)
+  # ✅ Prevents lateral movement (blocks 10.x.x.x, 192.168.x.x)
+  # ✅ Works with any LLM provider
+  # ✅ Scalable and production-grade
+  #
+  # Security layers:
+  # - This NetworkPolicy: Ingress control + lateral movement prevention
+  # - VPC Security Groups: Perimeter defense
+  # - Authentication: API keys, IAM roles
+  # - Encryption: TLS everywhere
+  #
   {{- if .Values.networkPolicy.egress.allowHTTPS.destinations }}
+  # Custom destinations specified (advanced use case)
+  {{- range .Values.networkPolicy.egress.allowHTTPS.destinations }}
   - to:
-    {{- range .Values.networkPolicy.egress.allowHTTPS.destinations }}
     - ipBlock:
         cidr: {{ . }}
-    {{- end }}
     ports:
     - protocol: TCP
       port: 443
+  {{- end }}
   {{- else }}
-  # If no destinations specified, deny all external HTTPS
-  # Comment this section out to allow all HTTPS (NOT RECOMMENDED)
-  # - to:
-  #   - ipBlock:
-  #       cidr: 0.0.0.0/0
-  #   ports:
-  #   - protocol: TCP
-  #     port: 443
+  # Default: Allow all external HTTPS, block private ranges (recommended)
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        # Block private IP ranges (prevents lateral movement)
+        except:
+        - 10.0.0.0/8       # RFC1918 Class A
+        - 172.16.0.0/12    # RFC1918 Class B
+        - 192.168.0.0/16   # RFC1918 Class C
+        - 169.254.0.0/16   # Link-local
+        - 127.0.0.0/8      # Loopback
+        - 224.0.0.0/4      # Multicast
+        - 240.0.0.0/4      # Reserved
+    ports:
+    - protocol: TCP
+      port: 443
   {{- end }}
   {{- end }}
   
-  {{/* Custom egress rules */}}
   {{- with .Values.networkPolicy.egress.customRules }}
+  # Custom egress rules
   {{- toYaml . | nindent 2 }}
   {{- end }}
 
@@ -167,11 +205,11 @@ spec:
   - Ingress
   - Egress
   
-  {{/* KAgent doesn't need ingress (only sends telemetry) */}}
+  # KAgent doesn't receive traffic (only sends telemetry)
   ingress: []
   
   egress:
-  # Allow DNS
+  # DNS queries (required)
   - to:
     - namespaceSelector:
         matchLabels:
@@ -185,7 +223,7 @@ spec:
     - protocol: TCP
       port: 53
   
-  # Allow OTEL to relayer
+  # OTEL telemetry to relayer (internal cluster communication)
   - to:
     - podSelector:
         matchLabels:
@@ -195,7 +233,7 @@ spec:
     - protocol: TCP
       port: {{ .Values.relayer.otel.port }}
   
-  # Allow Kubernetes API
+  # Kubernetes API access (for agent operations)
   - to:
     - namespaceSelector:
         matchLabels:
@@ -206,20 +244,46 @@ spec:
     - protocol: TCP
       port: 6443
   
-  # Allow HTTPS for LLM APIs
-  # ✅ FIXED: Should specify LLM provider IP ranges
-  # For production, restrict to specific IPs
+  #
+  # HTTPS for LLM API calls
+  # =======================
+  #
+  # KAgent makes direct API calls to LLM providers (Anthropic, OpenAI, etc.)
+  # Strategy: Allow all external HTTPS, block private IPs
+  #
+  # This provides:
+  # ✅ Zero maintenance (no IP tracking)
+  # ✅ Works with any LLM provider
+  # ✅ Prevents lateral movement
+  #
+  {{- if .Values.networkPolicy.egress.allowHTTPS.enabled }}
+  {{- if .Values.networkPolicy.egress.allowHTTPS.destinations }}
+  # Custom destinations specified
+  {{- range .Values.networkPolicy.egress.allowHTTPS.destinations }}
+  - to:
+    - ipBlock:
+        cidr: {{ . }}
+    ports:
+    - protocol: TCP
+      port: 443
+  {{- end }}
+  {{- else }}
+  # Default: Allow all external HTTPS, block private ranges
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0
-        # Exclude private ranges
+        # Block private IP ranges
         except:
         - 10.0.0.0/8
         - 172.16.0.0/12
         - 192.168.0.0/16
+        - 169.254.0.0/16
+        - 127.0.0.0/8
     ports:
     - protocol: TCP
       port: 443
-{{- end }}
+  {{- end }}
+  {{- end }}
 
+{{- end }}
 {{- end }}

@@ -126,9 +126,9 @@ annotations:
       image: ghcr.io/consonant/relayer:1.0.0
       whitelisted: true
     - name: cloudflared
-      image: cloudflare/cloudflared:2025.1.1
+      image: cloudflare/cloudflared:2025.11.1
     - name: kubectl
-      image: bitnami/kubectl:1.28
+      image: bitnami/kubectl:1.33
   
   artifacthub.io/operator: "false"
   artifacthub.io/operatorCapabilities: ""
@@ -255,7 +255,7 @@ jobs:
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
       
       - name: Install Helm
-        uses: azure/setup-helm@v3
+        uses: azure/setup-helm@v4
         with:
           version: '3.13.0'
       

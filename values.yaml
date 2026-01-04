@@ -238,7 +238,7 @@ cloudflare:
       # Image repository
       repository: cloudflare/cloudflared
       # Image tag (for reference only)
-      tag: "2025.1.1"
+      tag: "2025.11.1"
       # Image digest (THIS IS USED, NOT TAG)
       # ✅ FIXED: Using digest for immutability
       digest: "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
@@ -903,7 +903,7 @@ kagent:
   
   # Controller configuration
   controller:
-    replicas: 2  # ✅ CHANGED: HA by default
+    replicas: 1 
     loglevel: "info"
     resources:
       requests:
@@ -950,7 +950,7 @@ hooks:
     # Kubectl image (PINNED TO DIGEST)
     kubectlImage:
       repository: bitnami/kubectl
-      tag: "1.29.0"
+      tag: "1.33.0"
       # ✅ FIXED: Using digest
       digest: "sha256:9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba"
       pullPolicy: IfNotPresent

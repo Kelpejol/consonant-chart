@@ -61,13 +61,12 @@ Validates backend configuration
 {{- end }}
 
 {{/* Validate URL format */}}
-{{- if not (regexMatch "^https?://[a-zA-Z0-9.-]+(:[0-9]+)?(/.*)?$" .Values.backend.url) }}
-  {{- fail (printf "ERROR: backend.url '%s' is not a valid URL.\n\nURL must:\n  - Start with http:// or https://\n  - Have a valid hostname\n  - Optionally include port and path\n\nExamples:\n  - https://consonant.company.com\n  - https://api.consonant.com:8443\n  - http://localhost:3000 (dev only)" .Values.backend.url) }}
+{{- if not (regexMatch "^https?://.+" .Values.backend.url) }}
+  {{- fail "ERROR: backend.url must start with http:// or https://" }}
 {{- end }}
 
-{{/* Warn if using HTTP in production */}}
 {{- if and (hasPrefix "http://" .Values.backend.url) (eq .Values.cluster.environment "production") }}
-  {{- printf "\n⚠️  WARNING: Using HTTP in production is insecure!\n   Backend URL: %s\n   Environment: production\n   Recommendation: Use HTTPS with Cloudflare Tunnel\n" .Values.backend.url | fail }}
+  {{- printf "\n⚠️  WARNING: Using HTTP in production is insecure!\n   Backend URL: %s\n   Recommendation: Use HTTPS\n" .Values.backend.url | fail }}
 {{- end }}
 
 {{/* Validate reconnection settings */}}
@@ -269,8 +268,8 @@ Validates Kubernetes version compatibility
 */}}
 {{- define "consonant-relayer.validate.kubeVersion" -}}
 {{- if .Capabilities.KubeVersion.GitVersion }}
-  {{- if not (semverCompare ">=1.24.0-0" .Capabilities.KubeVersion.GitVersion) }}
-    {{- fail (printf "ERROR: Kubernetes version %s is not supported.\n\nMinimum required version: 1.24.0\n\nPlease upgrade your Kubernetes cluster." .Capabilities.KubeVersion.GitVersion) }}
+  {{- if not (semverCompare ">=1.33.0-0 <1.36.0-0" .Capabilities.KubeVersion.GitVersion) }}
+    {{- fail (printf "ERROR: Kubernetes version %s is not supported.\n\nMinimum required version: 1.33.0\n\nPlease upgrade your Kubernetes cluster." .Capabilities.KubeVersion.GitVersion) }}
   {{- end }}
 {{- end }}
 {{- end }}

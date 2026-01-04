@@ -36,6 +36,10 @@ metadata:
 
 ---
 # Hook Role (elevated permissions, namespace-scoped)
+# WARNING: This role can create ANY secret in the namespace
+# Kubernetes doesn't support resourceNames on 'create' verb
+# We rely on validation after creation to ensure correctness
+# This is a known limitation of Kubernetes RBAC
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

@@ -565,7 +565,7 @@ kubectl logs -n external-secrets-system \
 ```bash
 # Create SecretStore for Vault
 kubectl apply -f - <<EOF
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: vault-prod

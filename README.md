@@ -3,7 +3,7 @@
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/consonant/helm-charts)
 [![Type](https://img.shields.io/badge/type-application-informational)](https://helm.sh/docs/topics/charts/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Kubernetes](https://img.shields.io/badge/kubernetes-1.24%2B-brightgreen.svg)](https://kubernetes.io/)
+[![Kubernetes](https://img.shields.io/badge/kubernetes-1.33%2B-brightgreen.svg)](https://kubernetes.io/)
 
 Production-grade Helm chart for deploying the Consonant Relayer - an AI agent orchestration system that connects self-hosted backends to Kubernetes clusters via secure Cloudflare tunnels, enabling real-time telemetry streaming from KAgent to web UI.
 
@@ -102,9 +102,9 @@ Consonant Relayer is the bridge component that:
 
 | Component | Version | Purpose |
 |-----------|---------|---------|
-| **Kubernetes** | ≥ 1.24.0 | Container orchestration |
-| **Helm** | ≥ 3.8.0 | Package manager |
-| **kubectl** | ≥ 1.24.0 | CLI tool |
+| **Kubernetes** | ≥ 1.33.0 | Container orchestration |
+| **Helm** | ≥ 4.0.0 | Package manager |
+| **kubectl** | ≥ 1.33.0 | CLI tool |
 
 ### Backend Requirements
 
@@ -594,7 +594,7 @@ Logs are structured JSON:
 ```json
 {
   "level": "info",
-  "timestamp": "2025-01-03T10:15:30.123Z",
+  "timestamp": "2026-01-03T10:15:30.123Z",
   "msg": "Backend connected",
   "clusterId": "cluster_abc123",
   "component": "relayer",

@@ -30,20 +30,24 @@
           "type": "string",
           "maxLength": 100
         },
-        "environment": {
+       "environment": {
           "type": "string",
-          "enum": ["production", "staging", "development", "testing", ""]
-        }
+          "pattern": "^[a-zA-Z0-9-_]*$",
+          "maxLength": 50,
+          "description": "Environment name (any alphanumeric + hyphens/underscores)"
+  }
       }
     },
     "backend": {
       "type": "object",
       "required": ["url"],
       "properties": {
-        "url": {
+       "url": {
           "type": "string",
-          "pattern": "^https?://[a-zA-Z0-9.-]+(:[0-9]+)?(/.*)?$",
-          "description": "Valid HTTP/HTTPS URL"
+          "pattern": "^https?://",
+          "minLength": 10,
+          "maxLength": 500,
+          "description": "Valid HTTP or HTTPS URL"
         },
         "socketPath": {
           "type": "string",
@@ -107,11 +111,13 @@
           {
             "required": ["tunnelToken"],
             "properties": {
-              "tunnelToken": {
-                "type": "string",
-                "pattern": "^eyJ[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+$",
-                "minLength": 100
-              }
+            "tunnelToken": {
+              "type": "string",
+              "pattern": "^eyJ[A-Za-z0-9-_]{100,}\\.[A-Za-z0-9-_]{20,}\\.[A-Za-z0-9-_]{20,}$",
+              "minLength": 100,
+              "maxLength": 2000,
+              "description": "Cloudflare tunnel token (JWT format)"
+            }
             }
           },
           {
@@ -136,7 +142,10 @@
       "properties": {
         "provider": {
           "type": "string",
-          "enum": ["openai", "anthropic", "gemini", "azureopenai", "ollama"]
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "minLength": 2,
+          "maxLength": 50,
+          "description": "LLM provider name (lowercase, alphanumeric + hyphens)"
         },
         "model": {
           "type": "string",

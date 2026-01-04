@@ -10,7 +10,7 @@ Planned features and enhancements for Consonant Relayer Helm chart.
 - [Long-term Vision](#long-term-vision)
 - [Community Requests](#community-requests)
 
-## 🚀 Version 1.1.0 (Q1 2025)
+## 🚀 Version 1.1.0 (Q1 2026)
 
 **Focus:** Enhanced Security & Observability
 
@@ -88,7 +88,7 @@ secrets:
 - ✅ GitOps-friendly
 - ✅ Automatic decryption in cluster
 
-## 🎯 Version 1.2.0 (Q2 2025)
+## 🎯 Version 1.2.0 (Q2 2026)
 
 **Focus:** Multi-Region & Performance
 
@@ -182,7 +182,7 @@ caching:
 - ✅ Faster response times
 - ✅ Cost savings (LLM calls)
 
-## 🔄 Version 2.0.0 (Q3 2025)
+## 🔄 Version 2.0.0 (Q3 2026)
 
 **Focus:** Advanced Features & Enterprise
 
@@ -504,5 +504,4 @@ Want to influence the roadmap?
 
 ---
 
-**Last Updated:** 2025-01-03  
-**Next Review:** 2025-02-01
+**Last Updated:** 2026-01-03  

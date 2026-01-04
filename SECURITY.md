@@ -236,7 +236,7 @@ aws secretsmanager create-secret \
 #### 4. Configure SecretStore
 ```yaml
 # aws-secretstore.yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: aws-secrets-manager
@@ -707,7 +707,7 @@ relayer:
 
 # Peer Authentication
 ---
-apiVersion: security.istio.io/v1beta1
+apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata:
   name: consonant-mtls

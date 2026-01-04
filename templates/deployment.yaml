@@ -173,42 +173,29 @@ spec:
         image: {{ include "consonant-relayer.kubectlImage" . }}
         imagePullPolicy: {{ .Values.hooks.registration.kubectlImage.pullPolicy }}
         command:
-          - sh
+          - bash  # ✅ Use bash explicitly (not sh)
           - -c
           - |
             set -e
             echo "⏳ Waiting for Cloudflare tunnel to be ready..."
             
-            # ✅ FIXED: Proper netcat availability check
-            # Install netcat-openbsd (has -z flag)
-            if ! command -v nc &>/dev/null; then
-              echo "📦 Installing netcat..."
-              apk add --no-cache netcat-openbsd 2>/dev/null || {
-                echo "⚠️  Could not install netcat, using curl instead"
-                use_curl=true
-              }
-            fi
-            
             timeout=120  # 2 minutes
             elapsed=0
             interval=2
             
+            echo "🔍 Checking tunnel readiness (using bash TCP test)..."
             while [ $elapsed -lt $timeout ]; do
-              if [ "${use_curl:-false}" = "true" ]; then
-                # Use curl if netcat not available
-                if curl -s --max-time 2 http://localhost:8080 &>/dev/null; then
-                  echo "✅ Tunnel is ready!"
-                  exit 0
-                fi
-              else
-                # Use netcat
-                if nc -z localhost 8080 2>/dev/null; then
-                  echo "✅ Tunnel is ready!"
-                  exit 0
-                fi
+              # Bash built-in TCP test (no packages needed!)
+              if timeout 2 bash -c "exec 3<>/dev/tcp/localhost/8080" 2>/dev/null; then
+                echo "✅ Tunnel is ready!"
+                exit 0
               fi
               
-              echo "   Waiting... (${elapsed}s / ${timeout}s)"
+              # Progress indicator every 10 seconds
+              if [ $((elapsed % 10)) -eq 0 ] && [ $elapsed -gt 0 ]; then
+                echo "   Still waiting... (${elapsed}s / ${timeout}s)"
+              fi
+              
               sleep $interval
               elapsed=$((elapsed + interval))
             done
@@ -224,6 +211,7 @@ spec:
             echo "  3. Check Cloudflare tunnel status:"
             echo "     https://one.dash.cloudflare.com/ → Access → Tunnels"
             exit 1
+
         
         securityContext:
           allowPrivilegeEscalation: false

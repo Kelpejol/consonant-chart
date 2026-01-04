@@ -22,7 +22,7 @@ version: 1.0.0
 appVersion: "1.0.0"
 
 # Kubernetes version constraints
-kubeVersion: ">=1.24.0-0"
+kubeVersion: ">=1.33.0-0 <1.36.0-0"
 
 # Keywords for discoverability
 keywords:

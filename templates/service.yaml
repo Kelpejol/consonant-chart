@@ -75,6 +75,8 @@ spec:
     {{- end }}
   
   # Health port (HTTP)
+# Exposes: /health, /liveness, /readiness
+# Used by: Kubernetes probes, monitoring, debugging
   - name: health
     port: {{ .Values.service.health.port }}
     targetPort: {{ .Values.service.health.targetPort }}

@@ -30,7 +30,7 @@ This guide covers:
 ### 1. Kubernetes Cluster
 
 **Minimum requirements:**
-- Kubernetes ≥ 1.24.0
+- Kubernetes ≥ 1.33
 - 3+ worker nodes (for HA)
 - 2 CPU cores available
 - 2 GB RAM available
@@ -44,13 +44,13 @@ kubectl cluster-info
 
 ### 2. Helm
 
-**Install Helm 3:**
+**Install Helm 4:**
 ```bash
 # macOS
 brew install helm
 
 # Linux
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash
 
 # Verify
 helm version
@@ -152,7 +152,7 @@ helm install external-secrets \
 **For HashiCorp Vault:**
 ```yaml
 # vault-secretstore.yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: vault-prod
@@ -176,7 +176,7 @@ kubectl apply -f vault-secretstore.yaml
 **For AWS Secrets Manager:**
 ```yaml
 # aws-secretstore.yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: aws-secrets-manager
@@ -311,7 +311,7 @@ cloudflare:
   sidecar:
     image:
       repository: cloudflare/cloudflared
-      tag: "2025.1.1"
+      tag: "2025.11.1"
       # ✅ Use digest in production
       digest: "sha256:..."
     
@@ -457,7 +457,7 @@ helm install consonant-prod consonant/consonant-relayer \
 **Expected output:**
 ```
 NAME: consonant-prod
-LAST DEPLOYED: Fri Jan  3 10:15:30 2025
+LAST DEPLOYED: Fri Jan 2 10:15:30 2026
 NAMESPACE: consonant-system
 STATUS: deployed
 REVISION: 1

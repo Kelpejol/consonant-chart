@@ -30,7 +30,7 @@ This guide covers:
 ### 1. Kubernetes Cluster
 
 **Minimum requirements:**
-- Kubernetes ≥ 1.33
+- Kubernetes ≥ 1.32
 - 3+ worker nodes (for HA)
 - 2 CPU cores available
 - 2 GB RAM available
@@ -44,13 +44,13 @@ kubectl cluster-info
 
 ### 2. Helm
 
-**Install Helm 4:**
+**Install Helm 3:**
 ```bash
 # macOS
 brew install helm
 
 # Linux
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 # Verify
 helm version

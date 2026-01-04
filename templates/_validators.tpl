@@ -41,12 +41,6 @@ Validates cluster configuration
   {{- fail (printf "ERROR: cluster.name '%s' must be between 3 and 63 characters.\n\nCurrent length: %d" .Values.cluster.name (len .Values.cluster.name)) }}
 {{- end }}
 
-{{/* Validate environment if provided */}}
-{{- if .Values.cluster.environment }}
-  {{- if not (has .Values.cluster.environment (list "production" "staging" "development" "testing")) }}
-    {{- fail (printf "ERROR: cluster.environment '%s' is invalid.\n\nAllowed values: production, staging, development, testing" .Values.cluster.environment) }}
-  {{- end }}
-{{- end }}
 {{- end }}
 
 {{/*
@@ -268,8 +262,8 @@ Validates Kubernetes version compatibility
 */}}
 {{- define "consonant-relayer.validate.kubeVersion" -}}
 {{- if .Capabilities.KubeVersion.GitVersion }}
-  {{- if not (semverCompare ">=1.33.0-0 <1.36.0-0" .Capabilities.KubeVersion.GitVersion) }}
-    {{- fail (printf "ERROR: Kubernetes version %s is not supported.\n\nMinimum required version: 1.33.0\n\nPlease upgrade your Kubernetes cluster." .Capabilities.KubeVersion.GitVersion) }}
+  {{- if not (semverCompare ">=1.32.0-0 <1.35.0-0" .Capabilities.KubeVersion.GitVersion) }}
+    {{- fail (printf "ERROR: Kubernetes version %s is not supported.\n\nMinimum required version: 1.32.0\n\nPlease upgrade your Kubernetes cluster." .Capabilities.KubeVersion.GitVersion) }}
   {{- end }}
 {{- end }}
 {{- end }}

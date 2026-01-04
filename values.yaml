@@ -142,7 +142,7 @@ secrets:
   external:
     # Enable external secrets operator integration
     enabled: true  # ✅ CHANGED: Enabled by default
-    
+    minimumVersion: "v1.0.0"
     # SecretStore configuration
     # MUST be pre-created by cluster admin
     secretStore:
@@ -950,7 +950,7 @@ hooks:
     # Kubectl image (PINNED TO DIGEST)
     kubectlImage:
       repository: bitnami/kubectl
-      tag: "1.33.0"
+      tag: "1.32.0"
       # ✅ FIXED: Using digest
       digest: "sha256:9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba"
       pullPolicy: IfNotPresent
@@ -997,5 +997,5 @@ tests:
   # Test connection image
   image:
     repository: busybox
-    tag: "1.36.1"
+    tag: "1.35.1"
     digest: "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"

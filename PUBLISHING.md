@@ -128,7 +128,7 @@ annotations:
     - name: cloudflared
       image: cloudflare/cloudflared:2025.11.1
     - name: kubectl
-      image: bitnami/kubectl:1.33
+      image: bitnami/kubectl:1.32
   
   artifacthub.io/operator: "false"
   artifacthub.io/operatorCapabilities: ""

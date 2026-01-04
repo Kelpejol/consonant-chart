@@ -48,8 +48,8 @@ These are great for getting started!
 ```bash
 # Required
 - Kubernetes cluster (kind, minikube, or cloud)
-- Helm 4.0+
-- kubectl 1.33+
+- Helm 3.0+
+- kubectl 1.32+
 - Git
 
 # Recommended

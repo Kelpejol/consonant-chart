@@ -1,0 +1,38 @@
+{{- if .Values.otelCollector.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "consonant-mediator.fullname" . }}-otel
+  namespace: {{ include "consonant-mediator.namespace" . }}
+  labels:
+    {{- include "consonant-mediator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  type: ClusterIP
+  
+  selector:
+    {{- include "consonant-mediator.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+  
+  ports:
+  - name: otlp-grpc
+    port: {{ .Values.otelCollector.ports.grpc }}
+    targetPort: otlp-grpc
+    protocol: TCP
+  
+  - name: otlp-http
+    port: {{ .Values.otelCollector.ports.http }}
+    targetPort: otlp-http
+    protocol: TCP
+  
+  - name: prometheus
+    port: {{ .Values.otelCollector.ports.prometheus }}
+    targetPort: prometheus
+    protocol: TCP
+  
+  - name: health
+    port: {{ .Values.otelCollector.ports.health }}
+    targetPort: health
+    protocol: TCP
+{{- end }}

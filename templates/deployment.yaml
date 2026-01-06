@@ -167,76 +167,7 @@ spec:
           - name: tmp
             mountPath: /tmp
       
-      {{- if .Values.cloudflare.enabled }}
-      {{/* Wait for cloudflared tunnel (FIXED) */}}
-      - name: wait-for-tunnel
-        image: {{ include "consonant-relayer.kubectlImage" . }}
-        imagePullPolicy: {{ .Values.hooks.registration.kubectlImage.pullPolicy }}
-        command:
-          - bash  # ✅ Use bash explicitly (not sh)
-          - -c
-          - |
-            set -e
-            echo "⏳ Waiting for Cloudflare tunnel to be ready..."
-            
-            timeout=120  # 2 minutes
-            elapsed=0
-            interval=2
-            
-            echo "🔍 Checking tunnel readiness (using bash TCP test)..."
-            while [ $elapsed -lt $timeout ]; do
-              # Bash built-in TCP test (no packages needed!)
-              if timeout 2 bash -c "exec 3<>/dev/tcp/localhost/8080" 2>/dev/null; then
-                echo "✅ Tunnel is ready!"
-                exit 0
-              fi
-              
-              # Progress indicator every 10 seconds
-              if [ $((elapsed % 10)) -eq 0 ] && [ $elapsed -gt 0 ]; then
-                echo "   Still waiting... (${elapsed}s / ${timeout}s)"
-              fi
-              
-              sleep $interval
-              elapsed=$((elapsed + interval))
-            done
-            
-            echo "❌ ERROR: Cloudflare tunnel did not start within ${timeout}s"
-            echo ""
-            echo "Troubleshooting:"
-            echo "  1. Check cloudflared sidecar logs:"
-            echo "     kubectl logs -n {{ include "consonant-relayer.namespace" . }} POD_NAME -c cloudflared"
-            echo ""
-            echo "  2. Verify tunnel token is correct"
-            echo ""
-            echo "  3. Check Cloudflare tunnel status:"
-            echo "     https://one.dash.cloudflare.com/ → Access → Tunnels"
-            exit 1
-
-        
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-              - ALL
-          readOnlyRootFilesystem: false  # Need to install packages
-          runAsNonRoot: true
-          runAsUser: 65534
-          seccompProfile:
-            type: RuntimeDefault
-        
-        resources:
-          requests:
-            cpu: 50m
-            memory: 64Mi
-          limits:
-            cpu: 200m
-            memory: 128Mi
-        
-        volumeMounts:
-          - name: tmp
-            mountPath: /tmp
-      {{- end }}
-      
+    
       {{/*
       =============================================
       MAIN CONTAINERS
@@ -263,6 +194,9 @@ spec:
         
         - name: LOG_FORMAT
           value: {{ .Values.relayer.logging.format | quote }}
+
+          - name: LOG_STRUCTURED
+          value: {{ .Values.mediator.logging.structured | quote }}
         
         {{/* Cluster identity */}}
         - name: CLUSTER_ID
@@ -317,16 +251,16 @@ spec:
             fieldRef:
               fieldPath: spec.nodeName
         
-        {{/* Backend connection */}}
-        - name: BACKEND_WS_URL
-          value: {{ include "consonant-relayer.backendWsUrl" . | quote }}
+       # gRPC configuration
+        - name: GRPC_KEEPALIVE_TIME
+          value: {{ .Values.backend.grpc.keepalive.time | quote }}
         
-        - name: BACKEND_URL
-          value: {{ .Values.backend.url | quote }}
+        - name: GRPC_KEEPALIVE_TIMEOUT
+          value: {{ .Values.backend.grpc.keepalive.timeout | quote }}
         
-        - name: CONNECTION_TIMEOUT
-          value: {{ .Values.backend.connectionTimeout | quote }}
-        
+        - name: GRPC_KEEPALIVE_PERMIT_WITHOUT_STREAM
+          value: {{ .Values.backend.grpc.keepalive.permitWithoutStream | quote }}
+
         {{/* Circuit breaker */}}
         - name: CIRCUIT_BREAKER_ENABLED
           value: {{ .Values.backend.circuitBreaker.enabled | quote }}
@@ -340,57 +274,31 @@ spec:
         - name: CIRCUIT_BREAKER_TIMEOUT
           value: {{ .Values.backend.circuitBreaker.timeout | quote }}
         
-        {{/* Reconnection strategy */}}
-        - name: SOCKET_RECONNECTION
+       
+       # Reconnection strategy
+        - name: RECONNECTION_ENABLED
           value: {{ .Values.backend.reconnection.enabled | quote }}
         
-        - name: SOCKET_RECONNECTION_DELAY
-          value: {{ .Values.backend.reconnection.delay | quote }}
+        {{- if .Values.backend.reconnection.enabled }}
+        - name: RECONNECTION_INITIAL_DELAY
+          value: {{ .Values.backend.reconnection.initialDelay | quote }}
         
-        - name: SOCKET_RECONNECTION_DELAY_MAX
+        - name: RECONNECTION_MAX_DELAY
           value: {{ .Values.backend.reconnection.maxDelay | quote }}
         
-        - name: SOCKET_RECONNECTION_MULTIPLIER
+        - name: RECONNECTION_MULTIPLIER
           value: {{ .Values.backend.reconnection.multiplier | quote }}
         
-        - name: SOCKET_RECONNECTION_MAX_ATTEMPTS
-          value: {{ .Values.backend.reconnection.maxAttempts | quote }}
-        
-        - name: SOCKET_RECONNECTION_RANDOMIZATION
-          value: {{ .Values.backend.reconnection.randomization | quote }}
-        
-        {{/* Health check */}}
-        - name: HEALTH_CHECK_ENABLED
-          value: {{ .Values.backend.healthCheck.enabled | quote }}
-        
-        - name: HEALTH_CHECK_INTERVAL
-          value: {{ .Values.backend.healthCheck.interval | quote }}
-        
-        {{/* OTEL configuration */}}
-        - name: OTEL_PORT
-          value: {{ .Values.relayer.otel.port | quote }}
-        
-        - name: OTEL_BATCH_SIZE
-          value: {{ .Values.relayer.otel.batchSize | quote }}
-        
-        - name: OTEL_FLUSH_INTERVAL
-          value: {{ .Values.relayer.otel.flushInterval | quote }}
-        
-        - name: OTEL_MAX_QUEUE_SIZE
-          value: {{ .Values.relayer.otel.maxQueueSize | quote }}
-        
-        - name: OTEL_EXPORT_TIMEOUT
-          value: {{ .Values.relayer.otel.exportTimeout | quote }}
-        
+         - name: RECONNECTION_JITTER
+          value: {{ .Values.backend.reconnection.jitter | quote }}
+        {{- end }}
+
+            
         {{/* Health endpoint */}}
         - name: HEALTH_PORT
           value: {{ .Values.relayer.health.port | quote }}
         
         {{/* Container ports */}}
-        ports:
-        - name: otel
-          containerPort: {{ .Values.relayer.otel.port }}
-          protocol: TCP
         
         - name: health
           containerPort: {{ .Values.relayer.health.port }}
@@ -441,7 +349,7 @@ spec:
                 - -c
                 - |
                   set -e
-                  echo "🚀 Container started, verifying backend connection..."
+                  echo "🚀 Container started, verifying gRPC connection..."
                   
                   timeout={{ .Values.relayer.lifecycle.postStart.timeout }}
                   elapsed=0
@@ -449,16 +357,16 @@ spec:
                   
                   while [ $elapsed -lt $timeout ]; do
                     if wget -q -O- --timeout=3 http://localhost:${HEALTH_PORT}/readiness 2>/dev/null | grep -q '"connected":true'; then
-                      echo "✅ Backend connected successfully!"
+                      echo "✅ gRPC  connected successfully!"
                       exit 0
                     fi
                     
-                    echo "⏳ Waiting for backend connection... (${elapsed}s / ${timeout}s)"
+                    echo "⏳ Waiting for gRPC  connection... (${elapsed}s / ${timeout}s)"
                     sleep $interval
                     elapsed=$((elapsed + interval))
                   done
                   
-                  echo "❌ ERROR: Backend connection not established within ${timeout}s"
+                  echo "❌ ERROR: gRPC  connection not established within ${timeout}s"
                   {{- if .Values.relayer.lifecycle.postStart.failOnError }}
                   exit 1  # ✅ FIXED: Fail pod if connection fails
                   {{- else }}
@@ -492,81 +400,6 @@ spec:
           mountPath: /etc/consonant
           readOnly: true
       
-      {{- if .Values.cloudflare.enabled }}
-      {{/* CLOUDFLARED SIDECAR */}}
-      - name: cloudflared
-        image: {{ include "consonant-relayer.cloudflaredImage" . }}
-        imagePullPolicy: {{ .Values.cloudflare.sidecar.image.pullPolicy }}
-        
-        args:
-          - tunnel
-          - --no-autoupdate
-          - --protocol={{ .Values.cloudflare.sidecar.protocol }}
-          - --loglevel={{ .Values.cloudflare.sidecar.logLevel }}
-          {{- if .Values.cloudflare.sidecar.metrics.enabled }}
-          - --metrics=0.0.0.0:{{ .Values.cloudflare.sidecar.metrics.port }}
-          {{- end }}
-          - run
-          - --token=$(TUNNEL_TOKEN)
-          {{- with .Values.cloudflare.sidecar.extraArgs }}
-          {{- toYaml . | nindent 10 }}
-          {{- end }}
-        
-        env:
-        - name: TUNNEL_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: {{ include "consonant-relayer.tunnelSecretName" . }}
-              key: token
-        
-        - name: TUNNEL_TRANSPORT_PROTOCOL
-          value: {{ .Values.cloudflare.sidecar.protocol | quote }}
-        
-        - name: TUNNEL_LOGLEVEL
-          value: {{ .Values.cloudflare.sidecar.logLevel | quote }}
-        
-        {{- if .Values.cloudflare.sidecar.metrics.enabled }}
-        - name: TUNNEL_METRICS
-          value: "0.0.0.0:{{ .Values.cloudflare.sidecar.metrics.port }}"
-        {{- end }}
-        
-        {{- with .Values.cloudflare.sidecar.extraEnv }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-        
-        ports:
-        - name: http
-          containerPort: 8080
-          protocol: TCP
-        
-        {{- if .Values.cloudflare.sidecar.metrics.enabled }}
-        - name: metrics
-          containerPort: {{ .Values.cloudflare.sidecar.metrics.port }}
-          protocol: TCP
-        {{- end }}
-        
-        {{/* Readiness probe */}}
-        readinessProbe:
-          {{- toYaml .Values.cloudflare.sidecar.readinessProbe | nindent 10 }}
-        
-        {{/* Liveness probe */}}
-        livenessProbe:
-          {{- toYaml .Values.cloudflare.sidecar.livenessProbe | nindent 10 }}
-        
-        resources:
-          {{- toYaml .Values.cloudflare.sidecar.resources | nindent 10 }}
-        
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-              - ALL
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
-          runAsUser: 65532
-          seccompProfile:
-            type: RuntimeDefault
-      {{- end }}
       
       {{/*
       =============================================

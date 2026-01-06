@@ -14,7 +14,6 @@ This ensures the chart fails fast with clear error messages
 {{- include "consonant-relayer.validate.cluster" . }}
 {{- include "consonant-relayer.validate.backend" . }}
 {{- include "consonant-relayer.validate.secrets" . }}
-{{- include "consonant-relayer.validate.cloudflare" . }}
 {{- include "consonant-relayer.validate.llm" . }}
 {{- include "consonant-relayer.validate.images" . }}
 {{- include "consonant-relayer.validate.resources" . }}
@@ -123,36 +122,8 @@ Validates secret management configuration
 {{- end }}
 
 {{/*
-===========================================
-CLOUDFLARE VALIDATION
-===========================================
-Validates Cloudflare tunnel configuration
-*/}}
-{{- define "consonant-relayer.validate.cloudflare" -}}
-{{- if .Values.cloudflare.enabled }}
-  {{/* Validate tunnel token if using Kubernetes secrets */}}
-  {{- if eq .Values.secrets.mode "kubernetes" }}
-    {{- if .Values.secrets.kubernetes.tunnelToken }}
-      {{/* Validate token format (JWT) */}}
-      {{- if not (hasPrefix "eyJ" .Values.secrets.kubernetes.tunnelToken) }}
-        {{- fail "ERROR: Cloudflare tunnel token must be a valid JWT (starting with 'eyJ').\n\nGet your token from:\n  Cloudflare Dashboard → Zero Trust → Access → Tunnels → [Your Tunnel] → Configure\n\nToken format: eyJhIjoiYzRhM..." }}
-      {{- end }}
-      
-      {{/* Validate minimum token length */}}
-      {{- if lt (len .Values.secrets.kubernetes.tunnelToken) 100 }}
-        {{- fail "ERROR: Cloudflare tunnel token is too short.\n\nValid tokens are typically 200+ characters.\n\nPlease verify you copied the complete token." }}
-      {{- end }}
-    {{- end }}
-  {{- end }}
-  
-  {{/* Validate sidecar image */}}
-  {{- if not .Values.cloudflare.sidecar.image.digest }}
-    {{- printf "\n⚠️  WARNING: cloudflare.sidecar.image.digest is not set.\n   Using image tags instead of digests is insecure.\n   Recommendation: Pin to digest for immutability.\n" | fail }}
-  {{- end }}
-{{- end }}
-{{- end }}
 
-{{/*
+
 ===========================================
 LLM VALIDATION
 ===========================================

@@ -36,9 +36,16 @@ data:
   
   # Backend configuration
   backend.yaml: |
-    url: {{ .Values.backend.url | quote }}
-    socketPath: {{ .Values.backend.socketPath | quote }}
+   url: {{ .Values.backend.url | quote }}
+    grpcEndpoint: {{ include "consonant-mediator.grpcEndpoint" . | quote }}
+    tlsVerify: {{ .Values.backend.tlsVerify }}
     connectionTimeout: {{ .Values.backend.connectionTimeout }}
+
+    grpc:
+      keepalive:
+        time: {{ .Values.backend.grpc.keepalive.time }}
+        timeout: {{ .Values.backend.grpc.keepalive.timeout }}
+        permitWithoutStream: {{ .Values.backend.grpc.keepalive.permitWithoutStream }}
     
     circuitBreaker:
       enabled: {{ .Values.backend.circuitBreaker.enabled }}
@@ -53,28 +60,14 @@ data:
       maxDelay: {{ .Values.backend.reconnection.maxDelay }}
       multiplier: {{ .Values.backend.reconnection.multiplier }}
       maxAttempts: {{ .Values.backend.reconnection.maxAttempts }}
-      randomization: {{ .Values.backend.reconnection.randomization }}
+      jitter: {{ .Values.backend.reconnection.jitter }}
     
     healthCheck:
       enabled: {{ .Values.backend.healthCheck.enabled }}
       interval: {{ .Values.backend.healthCheck.interval }}
       timeout: {{ .Values.backend.healthCheck.timeout }}
       unhealthyThreshold: {{ .Values.backend.healthCheck.unhealthyThreshold }}
-  
-  # OTEL configuration
-  otel.yaml: |
-    port: {{ .Values.relayer.otel.port }}
-    batchSize: {{ .Values.relayer.otel.batchSize }}
-    flushInterval: {{ .Values.relayer.otel.flushInterval }}
-    maxQueueSize: {{ .Values.relayer.otel.maxQueueSize }}
-    exportTimeout: {{ .Values.relayer.otel.exportTimeout }}
     
-    retry:
-      enabled: {{ .Values.relayer.otel.retry.enabled }}
-      initialInterval: {{ .Values.relayer.otel.retry.initialInterval }}
-      maxInterval: {{ .Values.relayer.otel.retry.maxInterval }}
-      maxElapsedTime: {{ .Values.relayer.otel.retry.maxElapsedTime }}
-  
   # LLM configuration
   llm.yaml: |
     provider: {{ .Values.llm.provider | quote }}
@@ -135,21 +128,7 @@ data:
       thereafter: {{ .Values.relayer.logging.sampling.thereafter }}
     {{- end }}
   
-  # Feature flags
-  features.yaml: |
-    cloudflare:
-      enabled: {{ .Values.cloudflare.enabled }}
-    kagent:
-      enabled: {{ .Values.kagent.enabled }}
-    networkPolicy:
-      enabled: {{ .Values.networkPolicy.enabled }}
-    podDisruptionBudget:
-      enabled: {{ .Values.podDisruptionBudget.enabled }}
-    serviceMonitor:
-      enabled: {{ .Values.serviceMonitor.enabled }}
-    externalSecrets:
-      enabled: {{ and (eq .Values.secrets.mode "external") .Values.secrets.external.enabled }}
-  
+ 
   # Release metadata
   release.yaml: |
     name: {{ .Release.Name | quote }}

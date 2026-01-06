@@ -81,61 +81,7 @@
         }
       }
     },
-    "cloudflare": {
-      "type": "object",
-      "required": ["enabled"],
-      "properties": {
-        "enabled": {"type": "boolean"},
-        "sidecar": {
-          "type": "object",
-          "properties": {
-            "image": {
-              "type": "object",
-              "properties": {
-                "repository": {"type": "string"},
-                "tag": {"type": "string"},
-                "digest": {
-                  "type": "string",
-                  "pattern": "^sha256:[a-f0-9]{64}$"
-                }
-              }
-            }
-          }
-        }
-      },
-      "if": {
-        "properties": {"enabled": {"const": true}}
-      },
-      "then": {
-        "oneOf": [
-          {
-            "required": ["tunnelToken"],
-            "properties": {
-            "tunnelToken": {
-              "type": "string",
-              "pattern": "^eyJ[A-Za-z0-9-_]{100,}\\.[A-Za-z0-9-_]{20,}\\.[A-Za-z0-9-_]{20,}$",
-              "minLength": 100,
-              "maxLength": 2000,
-              "description": "Cloudflare tunnel token (JWT format)"
-            }
-            }
-          },
-          {
-            "properties": {
-              "secrets": {
-                "properties": {
-                  "external": {
-                    "properties": {
-                      "enabled": {"const": true}
-                    }
-                  }
-                }
-              }
-            }
-          }
-        ]
-      }
-    },
+   
     "llm": {
       "type": "object",
       "required": ["provider"],

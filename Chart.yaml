@@ -18,8 +18,10 @@ description: |
   - Comprehensive observability
 
 type: application
-version: 1.0.0
-appVersion: "1.0.0"
+# Semantic versioning: MAJOR.MINOR.PATCH-alpha.X
+# Alpha phase: Breaking changes expected
+version: 0.1.0-alpha.1
+appVersion: "0.1.0-alpha.1"
 
 # Kubernetes version constraints
 kubeVersion: ">=1.32.0-0 <1.35.0-0"

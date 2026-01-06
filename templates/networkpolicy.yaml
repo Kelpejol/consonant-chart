@@ -81,7 +81,6 @@ spec:
   */}}
   egress:
   {{- if .Values.networkPolicy.egress.allowDNS }}
-  # DNS queries (required)
   - to:
     - namespaceSelector:
         matchLabels:
@@ -96,8 +95,7 @@ spec:
       port: 53
   {{- end }}
   
-  {{- if .Values.networkPolicy.egress.allowKubernetesAPI }}
-  # Kubernetes API access (required for pod/node queries)
+  {{- if .Values.networkPolicy.egress.allowKubeAPI }}
   - to:
     - namespaceSelector:
         matchLabels:
@@ -109,44 +107,19 @@ spec:
       port: 6443
   {{- end }}
   
-  {{- if .Values.cloudflare.enabled }}
-  {{- if .Values.networkPolicy.egress.allowToCloudflared }}
-  # Cloudflared sidecar communication (localhost)
+  {{- if .Values.otelCollector.enabled }}
   - to:
     - podSelector:
         matchLabels:
-          {{- include "consonant-relayer.selectorLabels" . | nindent 10 }}
-          app.kubernetes.io/component: relayer
+          {{- include "consonant-mediator.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: otel-collector
     ports:
     - protocol: TCP
-      port: 8080
-  {{- end }}
+      port: {{ .Values.otelCollector.ports.grpc }}
   {{- end }}
   
   {{- if .Values.networkPolicy.egress.allowHTTPS.enabled }}
-  #
-  # HTTPS Egress Strategy
-  # =====================
-  #
-  # Purpose: Allow external API calls (LLM providers, backend) while
-  #          preventing lateral movement attacks
-  #
-  # Approach: Allow all external HTTPS (0.0.0.0/0), block private IPs
-  #
-  # Why this works:
-  # ✅ Zero maintenance (no IP tracking for Anthropic, OpenAI, etc.)
-  # ✅ Prevents lateral movement (blocks 10.x.x.x, 192.168.x.x)
-  # ✅ Works with any LLM provider
-  # ✅ Scalable and production-grade
-  #
-  # Security layers:
-  # - This NetworkPolicy: Ingress control + lateral movement prevention
-  # - VPC Security Groups: Perimeter defense
-  # - Authentication: API keys, IAM roles
-  # - Encryption: TLS everywhere
-  #
   {{- if .Values.networkPolicy.egress.allowHTTPS.destinations }}
-  # Custom destinations specified (advanced use case)
   {{- range .Values.networkPolicy.egress.allowHTTPS.destinations }}
   - to:
     - ipBlock:
@@ -154,6 +127,8 @@ spec:
     ports:
     - protocol: TCP
       port: 443
+    - protocol: TCP
+      port: 50051
   {{- end }}
   {{- else }}
   # Default: Allow all external HTTPS, block private ranges (recommended)

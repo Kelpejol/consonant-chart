@@ -1,0 +1,98 @@
+{{- if and .Values.otelCollector.enabled (eq .Values.otelCollector.type "deployment") }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "consonant-mediator.fullname" . }}-otel
+  namespace: {{ include "consonant-mediator.namespace" . }}
+  labels:
+    {{- include "consonant-mediator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: {{ .Values.otelCollector.replicas }}
+  
+  selector:
+    matchLabels:
+      {{- include "consonant-mediator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: otel-collector
+  
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  
+  template:
+    metadata:
+      labels:
+        {{- include "consonant-mediator.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: otel-collector
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/otel-collector-config.yaml") . | sha256sum }}
+    
+    spec:
+      serviceAccountName: {{ include "consonant-mediator.serviceAccountName" . }}
+      
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      
+      containers:
+      - name: otel-collector
+        image: {{ include "consonant-mediator.otelCollectorImage" . }}
+        imagePullPolicy: {{ .Values.otelCollector.image.pullPolicy }}
+        
+        args:
+          - --config=/etc/otelcol/config.yaml
+        
+        ports:
+        - name: otlp-grpc
+          containerPort: {{ .Values.otelCollector.ports.grpc }}
+          protocol: TCP
+        - name: otlp-http
+          containerPort: {{ .Values.otelCollector.ports.http }}
+          protocol: TCP
+        - name: prometheus
+          containerPort: {{ .Values.otelCollector.ports.prometheus }}
+          protocol: TCP
+        - name: health
+          containerPort: {{ .Values.otelCollector.ports.health }}
+          protocol: TCP
+        
+        livenessProbe:
+          httpGet:
+            path: /
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        resources:
+          {{- toYaml .Values.otelCollector.resources | nindent 10 }}
+        
+        securityContext:
+          {{- toYaml .Values.otelCollector.securityContext | nindent 10 }}
+        
+        volumeMounts:
+        - name: config
+          mountPath: /etc/otelcol
+          readOnly: true
+      
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "consonant-mediator.fullname" . }}-otel-config
+{{- end }}

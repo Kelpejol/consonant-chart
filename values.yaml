@@ -34,10 +34,9 @@ global:
 cluster:
   # REQUIRED: Unique cluster identifier
   # Constraints:
-  # - Must match regex: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-  # - Length: 3-63 characters
-  # - DNS-1123 subdomain compliant
-  # - Used for backend registration and UI identification
+  # Must be DNS-1123 compliant: lowercase, alphanumeric, hyphens
+  # Length: 3-63 characters
+  # Examples: "production-us-east-1", "staging-eu-west", "dev-local"
   name: ""  # REQUIRED: --set cluster.name=production-us-east-1
   
   # Namespace for agent workloads
@@ -72,12 +71,35 @@ backend:
   # - Should use Cloudflare tunnel URL for security
   url: ""  # REQUIRED: --set backend.url=https://consonant.company.com
   
-  # Socket.io path (usually don't change)
-  socketPath: "/socket.io"
+   # Optional: Explicit gRPC endpoint
+  # If not set, derived from backend.url
+  # Format: grpc://hostname:port
+  grpcEndpoint: ""  # Example: "grpc://consonant.company.com:50051"
+
+  # TLS verification for HTTPS connections
+  # NEVER disable in production
+  tlsVerify: true
+  
+  # Optional: Custom CA certificate (PEM format)
+  # Use when backend has self-signed certificate or internal CA
+  customCA: ""
+  # Example:
+  # customCA: |
+  #   -----BEGIN CERTIFICATE-----
+  #   MIIDXTCCAkWgAwIBAgIJAKZ...
+  #   -----END CERTIFICATE-----
   
   # Connection timeout (seconds)
   # If backend doesn't respond within this time, connection fails
   connectionTimeout: 30
+
+    # gRPC keepalive settings
+  # Prevents idle connection closure by proxies/load balancers
+  grpc:
+    keepalive:
+      time: 30          # Send keepalive ping every 30 seconds
+      timeout: 10       # Wait 10 seconds for keepalive ack
+      permitWithoutStream: true  # Allow keepalive without active RPCs
   
   # Circuit breaker configuration
   circuitBreaker:
@@ -130,13 +152,44 @@ backend:
       clusterId: "clusterId"
       clusterToken: "clusterToken"
 
+
+# ==============================================================================
+# AUTHENTICATION
+# ==============================================================================
+auth:
+  # REQUIRED: Pre-generated bearer token
+  # User must generate this BEFORE installing the chart
+  # 
+  # How to generate:
+  #   openssl rand -base64 48
+  # 
+  # Security requirements:
+  # - Minimum 32 bytes (256 bits) of entropy
+  # - Maximum 64 bytes for practical reasons
+  # - Store securely (password manager, vault)
+  # - Never commit to version control
+  # - Rotate regularly (90 days recommended)
+  # 
+  # This token is used:
+  # 1. By pre-install hook to register cluster
+  # 2. Stored in Kubernetes Secret
+  # 3. NOT used for runtime (cluster_id + cluster_secret used instead)
+  bearerToken: ""  # REQUIRED: Set with --set auth.bearerToken=YOUR_TOKEN
+  
+  # Alternative: Use existing Kubernetes secret
+  # If enabled, bearerToken above is ignored
+  existingSecret:
+    enabled: false
+    name: ""              # Name of existing secret
+    key: "bearer-token"   # Key within secret containing token
+
 # ============================================
 # SECRET MANAGEMENT (PRODUCTION RECOMMENDED)
 # ============================================
 secrets:
   # Secret management strategy
   # Options: external, kubernetes
-  mode: "external"  # ✅ CHANGED: External by default
+  mode: "external"  #  External by default
   
   # External secret management (RECOMMENDED FOR PRODUCTION)
   external:
@@ -158,6 +211,13 @@ secrets:
     
     # Secret paths in external vault
     paths:
+     
+     # Bearer token path
+      bearerToken:
+        key: "secret/data/consonant/bearer-token"
+        property: "token"
+        required: true
+
       # LLM API key path
       llmApiKey:
         # Full path to secret in vault
@@ -166,13 +226,7 @@ secrets:
         property: "apiKey"
         # Required: Fail if secret doesn't exist
         required: true
-      
-      # Cloudflare tunnel token path
-      tunnelToken:
-        key: "secret/data/consonant/cloudflare-tunnel"
-        property: "token"
-        required: true
-      
+    
       # Azure OpenAI specific (only if provider=azureopenai)
       azureEndpoint:
         key: "secret/data/consonant/azure-openai"
@@ -195,6 +249,10 @@ secrets:
   # Kubernetes native secrets (FALLBACK ONLY)
   # Only used if external.enabled=false
   kubernetes:
+
+    # Bearer token (if not using external secrets or existingSecret)
+    # Populated from auth.bearerToken value
+    bearerToken: ""
     # LLM API key (stored in K8s secret)
     # WARNING: Base64 encoded, NOT encrypted unless etcd encryption enabled
     llmApiKey: ""  # --set secrets.kubernetes.llmApiKey=sk-...
@@ -215,93 +273,6 @@ secrets:
       # Expected encryption provider
       provider: "aescbc"  # aescbc, aesgcm, secretbox
 
-# ============================================
-# CLOUDFLARE TUNNEL CONFIGURATION
-# ============================================
-cloudflare:
-  # Enable Cloudflare Tunnel integration
-  enabled: true
-  
-  # Tunnel token validation
-  tokenValidation:
-    # Validate token format before use
-    enabled: true
-    # Expected token prefix
-    prefix: "eyJ"  # JWT format
-    # Minimum token length
-    minLength: 100
-  
-  # Tunnel sidecar configuration
-  sidecar:
-    # Container image (PINNED TO DIGEST)
-    image:
-      # Image repository
-      repository: cloudflare/cloudflared
-      # Image tag (for reference only)
-      tag: "2025.11.1"
-      # Image digest (THIS IS USED, NOT TAG)
-      # ✅ FIXED: Using digest for immutability
-      digest: "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-      # Pull policy
-      pullPolicy: IfNotPresent
-    
-    # Tunnel protocol
-    # Options: quic, http2, h2mux
-    protocol: "quic"  # Recommended for performance
-    
-    # Log level
-    # Options: debug, info, warn, error, fatal
-    logLevel: "info"
-    
-    # Metrics configuration
-    metrics:
-      # Enable metrics endpoint
-      enabled: true
-      # Metrics port
-      port: 2000
-      # Metrics path
-      path: "/metrics"
-    
-    # Resource limits
-    resources:
-      requests:
-        cpu: 100m      # ✅ INCREASED from 50m
-        memory: 128Mi  # ✅ INCREASED from 64Mi
-      limits:
-        cpu: 500m      # ✅ INCREASED from 200m
-        memory: 256Mi  # ✅ INCREASED from 128Mi
-    
-    # Additional arguments
-    extraArgs: []
-    # Example:
-    # - --origincert=/etc/cloudflared/cert.pem
-    # - --no-tls-verify
-    
-    # Environment variables
-    extraEnv: []
-    # Example:
-    # - name: TUNNEL_LOGLEVEL
-    #   value: debug
-    
-    # Readiness probe
-    readinessProbe:
-      httpGet:
-        path: /ready
-        port: 2000
-      initialDelaySeconds: 5
-      periodSeconds: 5
-      timeoutSeconds: 2
-      failureThreshold: 3
-    
-    # Liveness probe
-    livenessProbe:
-      httpGet:
-        path: /ready
-        port: 2000
-      initialDelaySeconds: 30
-      periodSeconds: 30
-      timeoutSeconds: 5
-      failureThreshold: 3
 
 # ============================================
 # LLM CONFIGURATION (FOR KAGENT)
@@ -400,8 +371,8 @@ llm:
 # ============================================
 relayer:
   # Number of replicas
-  # Minimum: 1, Recommended: 3 for HA
-  replicas: 3  # ✅ CHANGED: HA by default
+  # Minimum: 1, Recommended: 2-3 for HA
+  replicas: 2  # ✅ CHANGED: HA by default
   
   # Deployment strategy
   strategy:
@@ -413,7 +384,7 @@ relayer:
   # Container image (PINNED TO DIGEST)
   image:
     repository: ghcr.io/consonant/relayer
-    tag: "1.0.0"
+    tag: "0.1.0-alpha.1"
     # ✅ FIXED: Using digest
     digest: "sha256:fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321"
     pullPolicy: IfNotPresent
@@ -424,11 +395,11 @@ relayer:
   # Resource configuration
   resources:
     requests:
-      cpu: 500m      # ✅ INCREASED from 200m
-      memory: 512Mi  # ✅ INCREASED from 256Mi
+      cpu: 200m      
+      memory: 256Mi  
     limits:
-      cpu: 2000m     # ✅ INCREASED from 1000m
-      memory: 1Gi    # ✅ INCREASED from 512Mi
+      cpu: 1000m    
+      memory: 512Mi   
   
   # Autoscaling (optional)
   autoscaling:
@@ -437,25 +408,6 @@ relayer:
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
-  
-  # OTEL collector configuration
-  otel:
-    # Port for OTEL receiver
-    port: 4317
-    # Batch size before forwarding
-    batchSize: 100
-    # Flush interval (milliseconds)
-    flushInterval: 1000
-    # Maximum queue size
-    maxQueueSize: 10000
-    # Export timeout (seconds)
-    exportTimeout: 30
-    # Retry configuration
-    retry:
-      enabled: true
-      initialInterval: 5
-      maxInterval: 30
-      maxElapsedTime: 300
   
   # Health check configuration
   health:
@@ -613,63 +565,122 @@ relayer:
   # Example:
   # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/consonant-relayer
 
-# ============================================
-# SERVICE CONFIGURATION
-# ============================================
-service:
-  # Service type
-  type: ClusterIP
+
+# ==============================================================================
+# OPENTELEMETRY COLLECTOR (BUILT-IN)
+# ==============================================================================
+otelCollector:
+  # Enable OTEL Collector
+  # RECOMMENDED: Always enabled for production
+  # Provides local buffering and processing of telemetry
+  enabled: true
   
-  # OTEL port configuration
-  otel:
-    port: 4317
-    targetPort: 4317
-    protocol: TCP
-    # NodePort (only if type=NodePort)
-    nodePort: null
+  # Deployment type
+  # Options:
+  # - "daemonset": One collector per node (recommended for most cases)
+  # - "deployment": Fixed number of replicas (better for large clusters)
+  type: "daemonset"
   
-  # Health port configuration
-  health:
-    port: 8080
-    targetPort: 8080
-    protocol: TCP
-    # NodePort (only if type=NodePort)
-    nodePort: null
+  # Replicas (only used if type="deployment")
+  replicas: 2
   
-  # Service annotations
-  annotations: {}
-  # Example:
-  # service.beta.kubernetes.io/aws-load-balancer-type: nlb
-  # service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+  # Container image
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.96.0"  # Check for latest: https://github.com/open-telemetry/opentelemetry-collector-releases
+    pullPolicy: IfNotPresent
   
-  # Service labels
-  labels: {}
+  # Resource allocation
+  # Adjust based on telemetry volume
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
   
-  # ClusterIP (optional, usually auto-assigned)
-  clusterIP: ""
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    seccompProfile:
+      type: RuntimeDefault
   
-  # External IPs
-  externalIPs: []
+  # Ports
+  ports:
+    grpc: 4317          # OTLP gRPC (primary)
+    http: 4318          # OTLP HTTP
+    prometheus: 8888    # Prometheus metrics
+    health: 13133       # Health check
   
-  # Load balancer IP (only if type=LoadBalancer)
-  loadBalancerIP: ""
+  # OTEL Collector configuration
+  # Full OpenTelemetry Collector config
+  config:
+    # Receivers define how telemetry enters the collector
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+          http:
+            endpoint: "0.0.0.0:4318"
+    
+    # Processors transform telemetry
+    processors:
+      # Batch processor groups telemetry for efficiency
+      batch:
+        timeout: 10s
+        send_batch_size: 1024
+      
+      # Memory limiter prevents OOM
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 512
+        spike_limit_mib: 128
+    
+    # Exporters send telemetry to backends
+    exporters:
+      # Log to console (for debugging)
+      logging:
+        loglevel: info
+      
+      # Forward to backend (configure if needed)
+      # Uncomment and configure to forward telemetry
+      # otlphttp:
+      #   endpoint: "https://consonant.company.com/v1/telemetry"
+      #   tls:
+      #     insecure: false
+      #   headers:
+      #     Authorization: "Bearer ${CLUSTER_SECRET}"
+    
+    # Service defines processing pipelines
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [logging]
+        
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [logging]
+        
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [logging]
   
-  # Load balancer source ranges
-  loadBalancerSourceRanges: []
-  
-  # External traffic policy
-  # Options: Cluster, Local
-  externalTrafficPolicy: ""
-  
-  # Session affinity
-  # Options: None, ClientIP
-  sessionAffinity: None
-  sessionAffinityConfig: {}
-  
-  # IP families
-  ipFamilyPolicy: SingleStack
-  ipFamilies:
-    - IPv4
+  # Service monitor for Prometheus
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
 
 # ============================================
 # NETWORK POLICY CONFIGURATION
@@ -709,8 +720,6 @@ networkPolicy:
     # Allow Kubernetes API
     allowKubernetesAPI: true
     
-    # Allow to cloudflared sidecar (localhost)
-    allowToCloudflared: true
     
     # ✅ FIXED: Restrict external HTTPS
     # Only allow to specific domains
@@ -752,6 +761,63 @@ podDisruptionBudget:
   # Unhealthy pod eviction policy
   # Options: IfHealthyBudget, AlwaysAllow
   unhealthyPodEvictionPolicy: "IfHealthyBudget"
+
+  # ==============================================================================
+# SERVICE CONFIGURATION
+# ==============================================================================
+service:
+  # Service type
+  # Options: ClusterIP, NodePort, LoadBalancer
+  # RECOMMENDED: ClusterIP (internal only)
+  type: ClusterIP
+  
+  # OTEL port configuration
+  otel:
+    port: 4317
+    targetPort: 4317
+    protocol: TCP
+    nodePort: null  # Only used if type=NodePort
+  
+  # Health port configuration
+  health:
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+    nodePort: null
+  
+  # Service annotations
+  annotations: {}
+  # Example (AWS):
+  # service.beta.kubernetes.io/aws-load-balancer-type: nlb
+  # service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+  
+  # Service labels
+  labels: {}
+  
+  # Cluster IP (usually auto-assigned)
+  clusterIP: ""
+  
+  # External IPs
+  externalIPs: []
+  
+  # Load balancer IP (only if type=LoadBalancer)
+  loadBalancerIP: ""
+  
+  # Load balancer source ranges
+  loadBalancerSourceRanges: []
+  
+  # External traffic policy
+  externalTrafficPolicy: ""
+  
+  # Session affinity
+  sessionAffinity: None
+  sessionAffinityConfig: {}
+  
+  # IP families
+  ipFamilyPolicy: SingleStack
+  ipFamilies:
+    - IPv4
+
 
 # ============================================
 # SERVICE MONITOR (PROMETHEUS)
@@ -858,25 +924,7 @@ kagent:
     querydoc:
       enabled: false
   
-  # OTEL configuration (auto-configured)
-  otel:
-    tracing:
-      enabled: true
-      exporter:
-        otlp:
-          # Auto-set to relayer service
-          endpoint: ""
-          insecure: true
-          timeout: 15
-    logging:
-      enabled: true
-      exporter:
-        otlp:
-          # Auto-set to relayer service
-          endpoint: ""
-          insecure: true
-          timeout: 15
-  
+
   # LLM providers (auto-configured)
   providers:
     # Default provider (auto-set)

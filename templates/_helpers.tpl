@@ -90,33 +90,32 @@ Create the name of the service account to use
 
 {{/*
 ===========================================
-URL HELPERS
+GRPC ENDPOINT HELPERS (NEW)
 ===========================================
 */}}
 
 {{/*
-Generate the backend WebSocket URL
+Generate gRPC endpoint from backend URL
+This helper derives the gRPC endpoint from backend.url if grpcEndpoint not explicitly set
+Supports: https://, http://, grpc:// prefixes
 */}}
-{{- define "consonant-relayer.backendWsUrl" -}}
-{{- if .Values.cloudflare.enabled }}
-ws://localhost:8080{{ .Values.backend.socketPath }}
+{{- define "consonant-mediator.grpcEndpoint" -}}
+{{- if .Values.backend.grpcEndpoint }}
+{{- .Values.backend.grpcEndpoint }}
 {{- else }}
 {{- $url := required "backend.url is required" .Values.backend.url }}
-{{- if hasPrefix "https://" $url }}
-{{- printf "wss://%s%s" (trimPrefix "https://" $url) .Values.backend.socketPath }}
+{{- if hasPrefix "grpc://" $url }}
+{{- $url }}
+{{- else if hasPrefix "https://" $url }}
+{{- $host := trimPrefix "https://" $url }}
+{{- printf "grpc://%s:50051" $host }}
 {{- else if hasPrefix "http://" $url }}
-{{- printf "ws://%s%s" (trimPrefix "http://" $url) .Values.backend.socketPath }}
+{{- $host := trimPrefix "http://" $url }}
+{{- printf "grpc://%s:50051" $host }}
 {{- else }}
-{{- fail "backend.url must start with http:// or https://" }}
+{{- fail "backend.url must start with https://, http://, or grpc://" }}
 {{- end }}
 {{- end }}
-{{- end }}
-
-{{/*
-Generate OTEL endpoint for KAgent
-*/}}
-{{- define "consonant-relayer.otelEndpoint" -}}
-http://{{ include "consonant-relayer.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.relayer.otel.port }}
 {{- end }}
 
 {{/*
@@ -138,13 +137,13 @@ Generate relayer image with digest or tag
 {{- end }}
 
 {{/*
-Generate cloudflared image with digest or tag
+Generate OTEL Collector image with digest or tag
 */}}
-{{- define "consonant-relayer.cloudflaredImage" -}}
-{{- if .Values.cloudflare.sidecar.image.digest }}
-{{- printf "%s@%s" .Values.cloudflare.sidecar.image.repository .Values.cloudflare.sidecar.image.digest }}
+{{- define "consonant-mediator.otelCollectorImage" -}}
+{{- if .Values.otelCollector.image.digest }}
+{{- printf "%s@%s" .Values.otelCollector.image.repository .Values.otelCollector.image.digest }}
 {{- else }}
-{{- printf "%s:%s" .Values.cloudflare.sidecar.image.repository .Values.cloudflare.sidecar.image.tag }}
+{{- printf "%s:%s" .Values.otelCollector.image.repository .Values.otelCollector.image.tag }}
 {{- end }}
 {{- end }}
 
@@ -166,6 +165,18 @@ SECRET NAME HELPERS
 */}}
 
 {{/*
+Bearer token secret name
+Used for initial registration authentication
+*/}}
+{{- define "consonant-mediator.authSecretName" -}}
+{{- if .Values.auth.existingSecret.enabled }}
+{{- .Values.auth.existingSecret.name }}
+{{- else }}
+{{- printf "%s-auth" (include "consonant-mediator.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
 LLM API key secret name
 */}}
 {{- define "consonant-relayer.llmSecretName" -}}
@@ -183,11 +194,24 @@ Cluster credentials secret name
 {{- end }}
 {{- end }}
 
+
 {{/*
-Cloudflare tunnel secret name
+
+===========================================
+OTEL COLLECTOR HELPERS (NEW)
+===========================================
 */}}
-{{- define "consonant-relayer.tunnelSecretName" -}}
-{{- printf "%s-tunnel" (include "consonant-relayer.fullname" .) }}
+
+{{/*
+OTEL Collector endpoint for KAgent
+Returns the internal cluster endpoint for OTEL Collector
+*/}}
+{{- define "consonant-mediator.otelCollectorEndpoint" -}}
+{{- if .Values.kagent.otelEndpoint }}
+{{- .Values.kagent.otelEndpoint }}
+{{- else }}
+{{- printf "http://%s-otel:4317" (include "consonant-mediator.fullname" .) }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -275,4 +299,53 @@ Return cluster metadata as JSON
 {{- $_ := set $metadata "custom" .Values.cluster.metadata }}
 {{- end }}
 {{- $metadata | toJson }}
+{{- end }}
+===========================================
+VALIDATION HELPERS
+===========================================
+*/}}
+
+{{/*
+Validate required values
+Run comprehensive validation before rendering any resources
+*/}}
+{{- define "consonant-mediator.validateConfig" -}}
+{{- $requiredValues := list
+  "cluster.name"
+  "backend.url"
+-}}
+{{- range $requiredValues }}
+{{- if not (index $.Values (split "." . | first) | default dict | dig (split "." . | rest | join ".") "" ) }}
+{{- fail (printf "ERROR: %s is required" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Validate cluster name format (DNS-1123)
+*/}}
+{{- if .Values.cluster.name }}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" .Values.cluster.name) }}
+{{- fail (printf "ERROR: cluster.name '%s' must be DNS-1123 compliant (lowercase, alphanumeric, hyphens)" .Values.cluster.name) }}
+{{- end }}
+{{- if or (lt (len .Values.cluster.name) 3) (gt (len .Values.cluster.name) 63) }}
+{{- fail (printf "ERROR: cluster.name must be 3-63 characters long (current: %d)" (len .Values.cluster.name)) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Validate backend URL format
+*/}}
+{{- if .Values.backend.url }}
+{{- if not (regexMatch "^(https?|grpc)://.+" .Values.backend.url) }}
+{{- fail "ERROR: backend.url must start with https://, http://, or grpc://" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Validate authentication configuration
+*/}}
+{{- if not (or .Values.auth.bearerToken .Values.auth.existingSecret.enabled (and (eq .Values.secrets.mode "external") .Values.secrets.external.enabled)) }}
+{{- fail "ERROR: auth.bearerToken is required OR auth.existingSecret.enabled=true OR secrets.mode=external with secrets.external.enabled=true" }}
+{{- end }}
+
 {{- end }}

@@ -1,22 +1,11 @@
-{{/*
-NOTES.txt - Post-Installation Instructions
-===========================================
-Displayed after successful installation
-Provides verification steps and next actions
-*/}}
-
-{{- $fullName := include "consonant-relayer.fullname" . -}}
-{{- $namespace := include "consonant-relayer.namespace" . -}}
-{{- $serviceName := $fullName -}}
-
-✅ Consonant Relayer installed successfully!
+✅ Consonant Mediator installed successfully!
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 INSTALLATION SUMMARY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Release:          {{ .Release.Name }}
-Namespace:        {{ $namespace }}
+Namespace:        {{ include "consonant-mediator.namespace" . }}
 Chart:            {{ .Chart.Name }}-{{ .Chart.Version }}
 App Version:      {{ .Chart.AppVersion }}
 
@@ -29,201 +18,34 @@ Environment:      {{ .Values.cluster.environment }}
 {{- end }}
 
 Backend:          {{ .Values.backend.url }}
-Cloudflare:       {{ if .Values.cloudflare.enabled }}✓ Enabled{{ else }}✗ Disabled{{ end }}
-KAgent:           {{ if .Values.kagent.enabled }}✓ Installed{{ else }}✗ Skipped{{ end }}
+gRPC Endpoint:    {{ include "consonant-mediator.grpcEndpoint" . }}
+OTEL Collector:   {{ if .Values.otelCollector.enabled }}✓ Enabled ({{ .Values.otelCollector.type }}){{ else }}✗ Disabled{{ end }}
 Network Policy:   {{ if .Values.networkPolicy.enabled }}✓ Enabled{{ else }}✗ Disabled{{ end }}
-External Secrets: {{ if and (eq .Values.secrets.mode "external") .Values.secrets.external.enabled }}✓ Enabled{{ else }}✗ Disabled{{ end }}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔍 VERIFY INSTALLATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. Check pod status:
-   kubectl get pods -n {{ $namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+1. Check mediator pod:
+   kubectl get pods -n {{ include "consonant-mediator.namespace" . }} -l app.kubernetes.io/component=mediator
 
-2. Watch pods until ready:
-   kubectl get pods -n {{ $namespace }} -w
+2. Check OTEL collector:
+   kubectl get pods -n {{ include "consonant-mediator.namespace" . }} -l app.kubernetes.io/component=otel-collector
 
-3. Check logs:
-   # Relayer logs
-   kubectl logs -n {{ $namespace }} -l app.kubernetes.io/name={{ include "consonant-relayer.name" . }},app.kubernetes.io/component=relayer -f
+3. View mediator logs:
+   kubectl logs -n {{ include "consonant-mediator.namespace" . }} -l app.kubernetes.io/component=mediator -f
 
-   {{- if .Values.cloudflare.enabled }}
-   # Cloudflared logs
-   kubectl logs -n {{ $namespace }} -l app.kubernetes.io/name={{ include "consonant-relayer.name" . }},app.kubernetes.io/component=relayer -c cloudflared -f
-   {{- end }}
-
-   {{- if .Values.kagent.enabled }}
-   # KAgent logs
-   kubectl logs -n {{ $namespace }} -l app.kubernetes.io/name=kagent -f
-   {{- end }}
-
-4. Check pre-install hooks:
-   # Registration hook
-   kubectl get job -n {{ $namespace }} {{ $fullName }}-register
-   kubectl logs -n {{ $namespace }} job/{{ $fullName }}-register
-
-   {{- if .Values.kagent.enabled }}
-   # KAgent cleanup hook
-   kubectl get job -n {{ $namespace }} {{ $fullName }}-kagent-cleanup
-   kubectl logs -n {{ $namespace }} job/{{ $fullName }}-kagent-cleanup
-   {{- end }}
-
-5. Verify cluster credentials:
-   kubectl get secret -n {{ $namespace }} {{ include "consonant-relayer.clusterSecretName" . }}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔗 CONNECTIVITY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Backend URL:      {{ .Values.backend.url }}
-{{- if .Values.cloudflare.enabled }}
-Connection:       Via Cloudflare Tunnel (secure)
-{{- else }}
-Connection:       Direct
-{{- end }}
-
-OTEL Endpoint:    {{ include "consonant-relayer.otelEndpoint" . }}
-Service DNS:      {{ $serviceName }}.{{ $namespace }}.svc.cluster.local
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🧪 TEST CONNECTION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. Port-forward to health endpoint:
-   kubectl port-forward -n {{ $namespace }} svc/{{ $serviceName }} 8080:{{ .Values.relayer.health.port }}
-
-2. Check health (in another terminal):
+4. Check gRPC connection:
+   kubectl port-forward -n {{ include "consonant-mediator.namespace" . }} svc/{{ include "consonant-mediator.fullname" . }} 8080:8080
    curl http://localhost:8080/health
 
-   Expected response:
-   {
-     "status": "ok",
-     "socket": {
-       "connected": true,
-       "clusterId": "cluster_xxx"
-     },
-     "otel": {
-       "port": {{ .Values.relayer.otel.port }},
-       "ready": true
-     }
-   }
-
-{{- if .Values.kagent.enabled }}
-
-3. Create a test agent:
-   kubectl apply -f - <<EOF
-   apiVersion: kagent.dev/v1alpha2
-   kind: Agent
-   metadata:
-     name: test-agent
-     namespace: {{ $namespace }}
-   spec:
-     type: Declarative
-     declarative:
-       description: "Test agent for Consonant verification"
-       modelRef:
-         name: default-{{ include "consonant-relayer.kagentProvider" . | lower }}
-   EOF
-
-4. Check agent status:
-   kubectl get agents -n {{ $namespace }} test-agent
-
-5. View in backend UI:
-   {{ .Values.backend.url }}/clusters/{{ .Values.cluster.name }}/agents
-{{- end }}
-
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚙️  CONFIGURATION
+📚 NEXT STEPS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-View current values:
-  helm get values {{ .Release.Name }} -n {{ $namespace }}
+1. Verify cluster appears in backend UI
+2. Install KAgent (if not already installed)
+3. Deploy agents and start using Consonant
 
-Update configuration:
-  helm upgrade {{ .Release.Name }} {{ .Chart.Name }} \
-    --reuse-values \
-    --set key=value
-
-View all resources:
-  helm get manifest {{ .Release.Name }} -n {{ $namespace }}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔧 TROUBLESHOOTING
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{{- if not .Values.cloudflare.enabled }}
-⚠️  WARNING: Cloudflare tunnel is disabled
-   Direct connections may not work in production
-   Enable with: --set cloudflare.enabled=true
-{{- end }}
-
-{{- if eq .Values.secrets.mode "kubernetes" }}
-⚠️  WARNING: Using Kubernetes secrets (not encrypted by default)
-   Enable external secrets for production:
-   --set secrets.mode=external --set secrets.external.enabled=true
-{{- end }}
-
-{{- if eq (int .Values.relayer.replicas) 1 }}
-{{- if eq .Values.cluster.environment "production" }}
-⚠️  WARNING: Single replica in production
-   Enable HA with: --set relayer.replicas=3
-{{- end }}
-{{- end }}
-
-If pods are not starting:
-  kubectl get events -n {{ $namespace }} --sort-by='.lastTimestamp'
-  kubectl describe pod -n {{ $namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
-
-{{- if .Values.cloudflare.enabled }}
-If tunnel is not connecting:
-  1. Verify token: kubectl get secret {{ include "consonant-relayer.tunnelSecretName" . }} -n {{ $namespace }}
-  2. Check logs: kubectl logs -n {{ $namespace }} -l app.kubernetes.io/name={{ include "consonant-relayer.name" . }} -c cloudflared
-  3. Verify in Cloudflare Dashboard: Zero Trust → Access → Tunnels
-{{- end }}
-
-If relayer not connecting to backend:
-  1. Check backend accessibility:
-     kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- curl -v {{ .Values.backend.url }}/health
-  2. Check relayer logs for connection errors
-  3. Verify cluster credentials secret exists
-
-{{- if .Values.kagent.enabled }}
-If no telemetry:
-  1. Check KAgent is sending: kubectl logs -n {{ $namespace }} -l app.kubernetes.io/name=kagent
-  2. Verify OTEL endpoint: kubectl get svc -n {{ $namespace }}
-  3. Check NetworkPolicy allows traffic
-{{- end }}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📚 DOCUMENTATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Full Documentation:    https://docs.consonant.xyz
-Installation Guide:    https://docs.consonant.xyz/installation
-Troubleshooting:       https://docs.consonant.xyz/troubleshooting
-Security Guide:        https://docs.consonant.xyz/security
-
-GitHub:                https://github.com/consonant/consonant
-Support:               support@consonant.xyz
-Community:             https://consonant.xyz/slack
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚀 NEXT STEPS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. Open Consonant backend:
-   {{ .Values.backend.url }}
-
-2. Navigate to your cluster:
-   Clusters → {{ .Values.cluster.name }}
-
-3. Create agents through the UI
-
-4. Watch real-time telemetry
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Thank you for using Consonant! 🎉
-
-For support: Visit us
+For support: support@consonant.xyz
+Documentation: https://docs.consonant.xyz

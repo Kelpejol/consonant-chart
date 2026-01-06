@@ -65,14 +65,6 @@ spec:
   
   # Ports
   ports:
-  # OTEL port (gRPC)
-  - name: otel
-    port: {{ .Values.service.otel.port }}
-    targetPort: {{ .Values.service.otel.targetPort }}
-    protocol: {{ .Values.service.otel.protocol }}
-    {{- if and (eq .Values.service.type "NodePort") .Values.service.otel.nodePort }}
-    nodePort: {{ .Values.service.otel.nodePort }}
-    {{- end }}
   
   # Health port (HTTP)
 # Exposes: /health, /liveness, /readiness
@@ -84,13 +76,5 @@ spec:
     {{- if and (eq .Values.service.type "NodePort") .Values.service.health.nodePort }}
     nodePort: {{ .Values.service.health.nodePort }}
     {{- end }}
-  
-  {{- if .Values.cloudflare.enabled }}
-  {{- if .Values.cloudflare.sidecar.metrics.enabled }}
-  # Cloudflared metrics port
-  - name: cf-metrics
-    port: {{ .Values.cloudflare.sidecar.metrics.port }}
-    targetPort: metrics
-    protocol: TCP
-  {{- end }}
+ 
   {{- end }}

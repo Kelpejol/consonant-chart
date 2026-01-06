@@ -1,0 +1,24 @@
+{{- if .Values.otelCollector.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "consonant-mediator.fullname" . }}-otel-config
+  namespace: {{ include "consonant-mediator.namespace" . }}
+  labels:
+    {{- include "consonant-mediator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+data:
+  config.yaml: |
+    receivers:
+      {{- toYaml .Values.otelCollector.config.receivers | nindent 6 }}
+    
+    processors:
+      {{- toYaml .Values.otelCollector.config.processors | nindent 6 }}
+    
+    exporters:
+      {{- toYaml .Values.otelCollector.config.exporters | nindent 6 }}
+    
+    service:
+      {{- toYaml .Values.otelCollector.config.service | nindent 6 }}
+{{- end }}

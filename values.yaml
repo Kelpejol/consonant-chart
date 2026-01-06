@@ -80,15 +80,7 @@ backend:
   # NEVER disable in production
   tlsVerify: true
   
-  # Optional: Custom CA certificate (PEM format)
-  # Use when backend has self-signed certificate or internal CA
-  customCA: ""
-  # Example:
-  # customCA: |
-  #   -----BEGIN CERTIFICATE-----
-  #   MIIDXTCCAkWgAwIBAgIJAKZ...
-  #   -----END CERTIFICATE-----
-  
+
   # Connection timeout (seconds)
   # If backend doesn't respond within this time, connection fails
   connectionTimeout: 30
@@ -111,8 +103,7 @@ backend:
     successThreshold: 2
     # Timeout before attempting to close circuit (seconds)
     timeout: 60
-    # Half-open state max attempts
-    halfOpenMaxAttempts: 3
+   
   
   # Reconnection strategy
   reconnection:
@@ -126,8 +117,8 @@ backend:
     multiplier: 2
     # Maximum number of attempts (0 = infinite)
     maxAttempts: 0  # ✅ FIXED: Controlled by circuit breaker
-    # Randomization factor (0.0 - 1.0)
-    randomization: 0.5
+    # Jitter factor (0.0 - 1.0)
+    jitter: 0.25
   
   # Health check configuration
   healthCheck:
@@ -158,30 +149,25 @@ backend:
 # ==============================================================================
 auth:
   # REQUIRED: Pre-generated bearer token
-  # User must generate this BEFORE installing the chart
+  # Used ONLY for initial cluster registration (pre-install hook)
+  # NOT used for runtime communication
   # 
-  # How to generate:
+  # How to generate (32-64 bytes recommended):
   #   openssl rand -base64 48
   # 
-  # Security requirements:
-  # - Minimum 32 bytes (256 bits) of entropy
-  # - Maximum 64 bytes for practical reasons
+  # Security:
   # - Store securely (password manager, vault)
   # - Never commit to version control
   # - Rotate regularly (90 days recommended)
-  # 
-  # This token is used:
-  # 1. By pre-install hook to register cluster
-  # 2. Stored in Kubernetes Secret
-  # 3. NOT used for runtime (cluster_id + cluster_secret used instead)
-  bearerToken: ""  # REQUIRED: Set with --set auth.bearerToken=YOUR_TOKEN
+  # - Will NOT be stored in cluster after registration
+  bearerToken: ""  # REQUIRED: Set via --set auth.bearerToken=YOUR_SECURE_TOKEN
   
-  # Alternative: Use existing Kubernetes secret
+  # Alternative: Use existing Kubernetes secret for bearer token
   # If enabled, bearerToken above is ignored
   existingSecret:
     enabled: false
-    name: ""              # Name of existing secret
-    key: "bearer-token"   # Key within secret containing token
+    name: ""  # Name of existing secret
+    key: "bearer-token"  # Key within secret
 
 # ============================================
 # SECRET MANAGEMENT (PRODUCTION RECOMMENDED)

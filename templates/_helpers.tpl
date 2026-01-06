@@ -90,7 +90,7 @@ Create the name of the service account to use
 
 {{/*
 ===========================================
-GRPC ENDPOINT HELPERS (NEW)
+GRPC ENDPOINT HELPERS 
 ===========================================
 */}}
 
@@ -99,7 +99,7 @@ Generate gRPC endpoint from backend URL
 This helper derives the gRPC endpoint from backend.url if grpcEndpoint not explicitly set
 Supports: https://, http://, grpc:// prefixes
 */}}
-{{- define "consonant-mediator.grpcEndpoint" -}}
+{{- define "consonant-relayer.grpcEndpoint" -}}
 {{- if .Values.backend.grpcEndpoint }}
 {{- .Values.backend.grpcEndpoint }}
 {{- else }}
@@ -139,7 +139,7 @@ Generate relayer image with digest or tag
 {{/*
 Generate OTEL Collector image with digest or tag
 */}}
-{{- define "consonant-mediator.otelCollectorImage" -}}
+{{- define "consonant-relayer.otelCollectorImage" -}}
 {{- if .Values.otelCollector.image.digest }}
 {{- printf "%s@%s" .Values.otelCollector.image.repository .Values.otelCollector.image.digest }}
 {{- else }}
@@ -165,14 +165,13 @@ SECRET NAME HELPERS
 */}}
 
 {{/*
-Bearer token secret name
-Used for initial registration authentication
+Auth bearer token secret name (for pre-install hook)
 */}}
-{{- define "consonant-mediator.authSecretName" -}}
+{{- define "consonant-relayer.authSecretName" -}}
 {{- if .Values.auth.existingSecret.enabled }}
 {{- .Values.auth.existingSecret.name }}
 {{- else }}
-{{- printf "%s-auth" (include "consonant-mediator.fullname" .) }}
+{{- printf "%s-auth" (include "consonant-relayer.fullname" .) }}
 {{- end }}
 {{- end }}
 
@@ -185,6 +184,8 @@ LLM API key secret name
 
 {{/*
 Cluster credentials secret name
+Contains cluster_id and cluster_token (NOT bearer token)
+Created by pre-install hook
 */}}
 {{- define "consonant-relayer.clusterSecretName" -}}
 {{- if .Values.backend.credentials.existingSecret }}
@@ -206,11 +207,11 @@ OTEL COLLECTOR HELPERS (NEW)
 OTEL Collector endpoint for KAgent
 Returns the internal cluster endpoint for OTEL Collector
 */}}
-{{- define "consonant-mediator.otelCollectorEndpoint" -}}
+{{- define "consonant-relayer.otelCollectorEndpoint" -}}
 {{- if .Values.kagent.otelEndpoint }}
 {{- .Values.kagent.otelEndpoint }}
 {{- else }}
-{{- printf "http://%s-otel:4317" (include "consonant-mediator.fullname" .) }}
+{{- printf "http://%s-otel:4317" (include "consonant-relayer.fullname" .) }}
 {{- end }}
 {{- end }}
 
@@ -300,6 +301,7 @@ Return cluster metadata as JSON
 {{- end }}
 {{- $metadata | toJson }}
 {{- end }}
+{{/*
 ===========================================
 VALIDATION HELPERS
 ===========================================
@@ -309,7 +311,7 @@ VALIDATION HELPERS
 Validate required values
 Run comprehensive validation before rendering any resources
 */}}
-{{- define "consonant-mediator.validateConfig" -}}
+{{- define "consonant-relayer.validateConfig" -}}
 {{- $requiredValues := list
   "cluster.name"
   "backend.url"

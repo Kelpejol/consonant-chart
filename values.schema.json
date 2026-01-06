@@ -6,7 +6,6 @@
   "required": [
     "cluster",
     "backend",
-    "cloudflare",
     "llm"
   ],
   "properties": {

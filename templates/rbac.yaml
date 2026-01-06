@@ -167,8 +167,6 @@ rules:
   resourceNames:
     - {{ include "consonant-relayer.clusterSecretName" . }}
     - {{ include "consonant-relayer.llmSecretName" . }}
-    {{- if .Values.cloudflare.enabled }}
-    - {{ include "consonant-relayer.tunnelSecretName" . }}
     {{- end }}
 
 # Read Events (for monitoring and debugging)

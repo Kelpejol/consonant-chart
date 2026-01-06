@@ -196,7 +196,7 @@ spec:
           value: {{ .Values.relayer.logging.format | quote }}
 
           - name: LOG_STRUCTURED
-          value: {{ .Values.mediator.logging.structured | quote }}
+          value: {{ .Values.relayer.logging.structured | quote }}
         
         {{/* Cluster identity */}}
         - name: CLUSTER_ID
@@ -251,7 +251,18 @@ spec:
             fieldRef:
               fieldPath: spec.nodeName
         
-       # gRPC configuration
+       {{/* Backend configuration */}}
+        - name: BACKEND_URL
+          value: {{ .Values.backend.url | quote }}
+        
+        - name: GRPC_ENDPOINT
+          value: {{ include "consonant-relayer.grpcEndpoint" . | quote }}
+        
+        - name: CONNECTION_TIMEOUT
+          value: {{ .Values.backend.connectionTimeout | quote }}
+
+        {{/* gRPC keepalive configuration */}}
+
         - name: GRPC_KEEPALIVE_TIME
           value: {{ .Values.backend.grpc.keepalive.time | quote }}
         

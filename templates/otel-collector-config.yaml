@@ -3,10 +3,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "consonant-mediator.fullname" . }}-otel-config
-  namespace: {{ include "consonant-mediator.namespace" . }}
+  name: {{ include "consonant-relayer.fullname" . }}-otel-config
+  namespace: {{ include "consonant-relayer.namespace" . }}
   labels:
-    {{- include "consonant-mediator.labels" . | nindent 4 }}
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
     app.kubernetes.io/component: otel-collector
 data:
   config.yaml: |

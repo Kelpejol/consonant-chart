@@ -16,6 +16,13 @@ description: |
   - High availability configuration
   - Network isolation policies
   - Comprehensive observability
+  - Outbound-only gRPC connections to self-hosted backend
+  - Bearer token authentication for initial registration
+  - Built-in OpenTelemetry Collector for agent telemetry
+  - Production-ready security controls
+  - High availability configuration
+  - Network isolation policies
+  - No inbound cluster access required
 
 type: application
 # Semantic versioning: MAJOR.MINOR.PATCH-alpha.X
@@ -37,7 +44,6 @@ keywords:
   - multi-agent
   - control-plane
   - kagent
-  - cloudflare
   - enterprise
 
 # Chart maintainers
@@ -100,8 +106,6 @@ annotations:
   artifacthub.io/images: |
     - name: consonant-relayer
       image: ghcr.io/consonant/relayer@sha256:abc123...
-    - name: cloudflared
-      image: cloudflare/cloudflared@sha256:def456...
     - name: kubectl
       image: bitnami/kubectl@sha256:789ghi...
   

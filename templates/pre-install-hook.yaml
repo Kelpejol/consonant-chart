@@ -1,8 +1,9 @@
 {{/*
-Pre-Install Hook - Enhanced Cluster Registration
-================================================
-Registers cluster with backend and creates credentials
-Now with proper JSON validation and error handling
+Pre-Install Hook - Cluster Registration with Bearer Token
+==========================================================
+Registers cluster with backend using bearer token authentication
+Returns cluster_id and cluster_token which are stored as K8s secret
+Bearer token is NOT stored in cluster
 */}}
 
 {{- if not .Values.backend.credentials.existingSecret }}
@@ -29,7 +30,8 @@ data:
   register.sh: |
     #!/bin/sh
      # Consonant Cluster Registration Script
-    # Uses bearer token for authentication
+     # Uses bearer token for authentication (ONE-TIME USE)
+    # Returns cluster_id and cluster_token for runtime use
     
     set -e
     
@@ -130,6 +132,7 @@ data:
         6) echo "Could not resolve host" ;;
         7) echo "Failed to connect to host" ;;
         28) echo "Connection timeout" ;;
+        35) echo "SSL/TLS handshake failed" ;;
         *) echo "Unknown error" ;;
       esac
       echo ""
@@ -137,6 +140,7 @@ data:
       echo "  1. Verify backend is running:"
       echo "     curl ${BACKEND_URL}/health"
       echo "  2. Check network connectivity from cluster"
+      echo "  3. Verify bearer token is correct"
       exit 1
     fi
     
@@ -313,14 +317,17 @@ data:
     echo ""
     echo "Summary:"
     echo "  Cluster ID:    ${CLUSTER_ID}"
-    echo "  Secret:        ${SECRET_NAME}"
+    echo "  Secret Name:   ${SECRET_NAME}"
     echo "  Namespace:     ${NAMESPACE}"
     echo ""
-    echo "Next steps:"
-    echo "  → Relayer will connect using these credentials"
-    echo "  → View in UI: ${BACKEND_URL}/clusters/${CLUSTER_ID}"
+    echo "Security Note:"
+    echo "  ✓ cluster_id and cluster_token stored in secret"
+    echo "  ✓ Bearer token NOT stored (one-time use only)"
     echo ""
-
+    echo "Next:"
+    echo "  → Relayer will connect using cluster credentials"
+    echo "  → View cluster in backend UI"
+    echo ""
 {{/*
 =============================================
 REGISTRATION JOB
@@ -378,20 +385,17 @@ spec:
           value: {{ include "consonant-relayer.namespace" . | quote }}
         - name: BACKEND_URL
           value: {{ .Values.backend.url | quote }}
+      # CRITICAL: Bearer token from values (one-time use, NOT stored)
         - name: BEARER_TOKEN
           {{- if .Values.auth.existingSecret.enabled }}
           valueFrom:
             secretKeyRef:
               name: {{ .Values.auth.existingSecret.name }}
               key: {{ .Values.auth.existingSecret.key }}
-          {{- else if (include "consonant-mediator.useExternalSecrets" .) }}
-          valueFrom:
-            secretKeyRef:
-              name: {{ include "consonant-mediator.authSecretName" . }}
-              key: bearer-token
           {{- else }}
           value: {{ required "auth.bearerToken is required" .Values.auth.bearerToken | quote }}
           {{- end }}
+        
         volumeMounts:
         - name: scripts
           mountPath: /scripts

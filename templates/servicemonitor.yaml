@@ -56,14 +56,4 @@ spec:
       {{- toYaml . | nindent 6 }}
     {{- end }}
   
-  {{- if .Values.cloudflare.enabled }}
-  {{- if .Values.cloudflare.sidecar.metrics.enabled }}
-  # Cloudflared metrics endpoint
-  - port: metrics
-    path: {{ .Values.cloudflare.sidecar.metrics.path }}
-    interval: {{ .Values.serviceMonitor.interval }}
-    scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
-    scheme: http
-  {{- end }}
-  {{- end }}
 {{- end }}

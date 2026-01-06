@@ -103,9 +103,6 @@ Validates secret management configuration
       {{- fail "ERROR: secrets.external.paths.llmApiKey.key is required.\n\nExample:\n  --set secrets.external.paths.llmApiKey.key=secret/data/consonant/llm-key" }}
     {{- end }}
     
-    {{- if and .Values.cloudflare.enabled (not .Values.secrets.external.paths.tunnelToken.key) }}
-      {{- fail "ERROR: secrets.external.paths.tunnelToken.key is required when Cloudflare is enabled.\n\nExample:\n  --set secrets.external.paths.tunnelToken.key=secret/data/consonant/tunnel" }}
-    {{- end }}
   {{- end }}
 {{- else if eq .Values.secrets.mode "kubernetes" }}
   {{/* Kubernetes secrets validation */}}
@@ -113,9 +110,7 @@ Validates secret management configuration
     {{- fail "ERROR: secrets.kubernetes.llmApiKey is required when using Kubernetes secrets.\n\nSet it with:\n  --set secrets.kubernetes.llmApiKey=sk-...\n\nOr use external secrets (recommended):\n  --set secrets.mode=external\n  --set secrets.external.enabled=true" }}
   {{- end }}
   
-  {{- if and .Values.cloudflare.enabled (not .Values.secrets.kubernetes.tunnelToken) }}
-    {{- fail "ERROR: secrets.kubernetes.tunnelToken is required when Cloudflare is enabled.\n\nSet it with:\n  --set secrets.kubernetes.tunnelToken=eyJ...\n\nOr use external secrets (recommended):\n  --set secrets.mode=external" }}
-  {{- end }}
+ 
 {{- else }}
   {{- fail (printf "ERROR: secrets.mode must be 'external' or 'kubernetes'.\n\nCurrent value: %s" .Values.secrets.mode) }}
 {{- end }}

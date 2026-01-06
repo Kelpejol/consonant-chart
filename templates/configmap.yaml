@@ -37,7 +37,7 @@ data:
   # Backend configuration
   backend.yaml: |
    url: {{ .Values.backend.url | quote }}
-    grpcEndpoint: {{ include "consonant-mediator.grpcEndpoint" . | quote }}
+    grpcEndpoint: {{ include "consonant-relayer.grpcEndpoint" . | quote }}
     tlsVerify: {{ .Values.backend.tlsVerify }}
     connectionTimeout: {{ .Values.backend.connectionTimeout }}
 

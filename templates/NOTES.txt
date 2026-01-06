@@ -1,11 +1,11 @@
-✅ Consonant Mediator installed successfully!
+✅ Consonant Relayer installed successfully!
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 INSTALLATION SUMMARY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Release:          {{ .Release.Name }}
-Namespace:        {{ include "consonant-mediator.namespace" . }}
+Namespace:        {{ include "consonant-relayer.namespace" . }}
 Chart:            {{ .Chart.Name }}-{{ .Chart.Version }}
 App Version:      {{ .Chart.AppVersion }}
 
@@ -18,7 +18,7 @@ Environment:      {{ .Values.cluster.environment }}
 {{- end }}
 
 Backend:          {{ .Values.backend.url }}
-gRPC Endpoint:    {{ include "consonant-mediator.grpcEndpoint" . }}
+gRPC Endpoint:    {{ include "consonant-relayer.grpcEndpoint" . }}
 OTEL Collector:   {{ if .Values.otelCollector.enabled }}✓ Enabled ({{ .Values.otelCollector.type }}){{ else }}✗ Disabled{{ end }}
 Network Policy:   {{ if .Values.networkPolicy.enabled }}✓ Enabled{{ else }}✗ Disabled{{ end }}
 
@@ -26,17 +26,17 @@ Network Policy:   {{ if .Values.networkPolicy.enabled }}✓ Enabled{{ else }}✗
 🔍 VERIFY INSTALLATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. Check mediator pod:
-   kubectl get pods -n {{ include "consonant-mediator.namespace" . }} -l app.kubernetes.io/component=mediator
+1. Check relayer pod:
+   kubectl get pods -n {{ include "consonant-relayer.namespace" . }} -l app.kubernetes.io/component=relayer
 
 2. Check OTEL collector:
-   kubectl get pods -n {{ include "consonant-mediator.namespace" . }} -l app.kubernetes.io/component=otel-collector
+   kubectl get pods -n {{ include "consonant-relayer.namespace" . }} -l app.kubernetes.io/component=otel-collector
 
-3. View mediator logs:
-   kubectl logs -n {{ include "consonant-mediator.namespace" . }} -l app.kubernetes.io/component=mediator -f
+3. View relayer logs:
+   kubectl logs -n {{ include "consonant-relayer.namespace" . }} -l app.kubernetes.io/component=relayer -f
 
 4. Check gRPC connection:
-   kubectl port-forward -n {{ include "consonant-mediator.namespace" . }} svc/{{ include "consonant-mediator.fullname" . }} 8080:8080
+   kubectl port-forward -n {{ include "consonant-relayer.namespace" . }} svc/{{ include "consonant-relayer.fullname" . }} 8080:8080
    curl http://localhost:8080/health
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

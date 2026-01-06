@@ -3,15 +3,15 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ include "consonant-mediator.fullname" . }}-otel
-  namespace: {{ include "consonant-mediator.namespace" . }}
+  name: {{ include "consonant-relayer.fullname" . }}-otel
+  namespace: {{ include "consonant-relayer.namespace" . }}
   labels:
-    {{- include "consonant-mediator.labels" . | nindent 4 }}
+    {{- include "consonant-relayer.labels" . | nindent 4 }}
     app.kubernetes.io/component: otel-collector
 spec:
   selector:
     matchLabels:
-      {{- include "consonant-mediator.selectorLabels" . | nindent 6 }}
+      {{- include "consonant-relayer.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: otel-collector
   
   updateStrategy:
@@ -22,13 +22,13 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "consonant-mediator.selectorLabels" . | nindent 8 }}
+        {{- include "consonant-relayer.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: otel-collector
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/otel-collector-config.yaml") . | sha256sum }}
     
     spec:
-      serviceAccountName: {{ include "consonant-mediator.serviceAccountName" . }}
+      serviceAccountName: {{ include "consonant-relayer.serviceAccountName" . }}
       
       securityContext:
         runAsNonRoot: true
@@ -39,7 +39,7 @@ spec:
       
       containers:
       - name: otel-collector
-        image: {{ include "consonant-mediator.otelCollectorImage" . }}
+        image: {{ include "consonant-relayer.otelCollectorImage" . }}
         imagePullPolicy: {{ .Values.otelCollector.image.pullPolicy }}
         
         args:
@@ -91,5 +91,5 @@ spec:
       volumes:
       - name: config
         configMap:
-          name: {{ include "consonant-mediator.fullname" . }}-otel-config
+          name: {{ include "consonant-relayer.fullname" . }}-otel-config
 {{- end }}
